@@ -24,14 +24,18 @@ import (
 type Handler struct {
 	Client   client.Client
 	MaxSurge time.Duration
-	Log      logr.Logger
+	// StripLabelPrefixes are label-key prefixes dropped from the cloned surge
+	// pod (in addition to the ReplicaSet's pod-template-hash). Cluster-specific;
+	// see surge.BuildSurgePod.
+	StripLabelPrefixes []string
+	Log                logr.Logger
 	// now is overridable in tests.
 	now func() time.Time
 }
 
 // NewHandler builds a Handler with a real clock.
-func NewHandler(c client.Client, maxSurge time.Duration, log logr.Logger) *Handler {
-	return &Handler{Client: c, MaxSurge: maxSurge, Log: log, now: time.Now}
+func NewHandler(c client.Client, maxSurge time.Duration, stripLabelPrefixes []string, log logr.Logger) *Handler {
+	return &Handler{Client: c, MaxSurge: maxSurge, StripLabelPrefixes: stripLabelPrefixes, Log: log, now: time.Now}
 }
 
 // Handle is the admission entrypoint. Every branch that can't or needn't help
@@ -72,7 +76,7 @@ func (h *Handler) Handle(ctx context.Context, req admission.Request) admission.R
 
 	// No stand-in yet: create one and hold the eviction.
 	if existing == nil {
-		want := surge.BuildSurgePod(pod, dep)
+		want := surge.BuildSurgePod(pod, dep, h.StripLabelPrefixes)
 		if err := h.Client.Create(ctx, want); err != nil && !apierrors.IsAlreadyExists(err) {
 			// Can't create the stand-in -> don't block the drain.
 			log.Error(err, "failed to create surge pod, failing open")

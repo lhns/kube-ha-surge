@@ -41,8 +41,7 @@ Generate a self-signed CA + serving cert with Helm's **`genCA`/`genSignedCert`**
 at template time, store it in the `kube-ha-surge-webhook-tls` Secret, and inject
 the CA into the webhook config's `caBundle` (base64) directly. On `helm upgrade`
 the existing Secret is **reused via `lookup`** so the cert does not rotate every
-reconcile — regeneration happens only if the Secret is missing. This follows the
-pattern from kube-vnet's ADR 0034.
+reconcile — regeneration happens only if the Secret is missing.
 
 Because `genCA`/`genSignedCert` are non-deterministic, the material is generated
 **exactly once per render** and cached on `.Values` so both the Secret template

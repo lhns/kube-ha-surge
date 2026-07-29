@@ -10,9 +10,8 @@ kube-ha-surge is an admission webhook plus a garbage-collection controller. It
 needs: an HTTPS webhook server with serving-cert handling, a typed Kubernetes
 client with caching informers (to read Deployments, ReplicaSets, Pods, PVCs,
 EndpointSlices cheaply), leader election, health/readiness probes, and metrics.
-It should also match the conventions of the other lhns operators
-(`kube-vnet`, `kube-pv-reaper`) so contributors move between them without
-relearning project shape.
+It should also match the conventions of the other lhns operators so
+contributors move between them without relearning project shape.
 
 ## Decision
 

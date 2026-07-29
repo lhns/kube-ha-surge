@@ -42,19 +42,10 @@ const (
 	podTemplateHashLabel = "pod-template-hash"
 )
 
-// OperatorManagedLabelPrefixes are label prefixes injected onto pods by other
-// operators at admission/runtime. A clone must NOT carry them: the owning
-// operator re-derives them, and some are guarded by admission policies that
-// reject any user-set value — e.g. kube-vnet's `kube-vnet.system/` labels are
-// denied by a ValidatingAdmissionPolicy, which would block the surge pod's
-// creation. Extend this list for other such operators in your cluster.
-var OperatorManagedLabelPrefixes = []string{
-	"kube-vnet.system/",
-}
-
-func isOperatorManagedLabel(key string) bool {
-	for _, p := range OperatorManagedLabelPrefixes {
-		if strings.HasPrefix(key, p) {
+// hasAnyPrefix reports whether key starts with any of the given prefixes.
+func hasAnyPrefix(key string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if p != "" && strings.HasPrefix(key, p) {
 			return true
 		}
 	}
@@ -141,10 +132,17 @@ func SurgeName(deployment string) string {
 // pinning and the ReplicaSet's pod-template-hash, marked as a surge pod, and
 // owned (controller=true) by the target Deployment so the ReplicaSet ignores it
 // and it is garbage-collected with the Deployment.
-func BuildSurgePod(target *corev1.Pod, dep *appsv1.Deployment) *corev1.Pod {
+//
+// stripLabelPrefixes drops any inherited label whose key starts with one of the
+// given prefixes. Use it for labels a controller injects onto pods at runtime
+// and re-derives on new pods — some clusters guard such labels with admission
+// policies that reject a user-supplied value, which would block the clone's
+// creation. The prefix set is cluster-specific and supplied by the operator's
+// deployment; the code itself carries no assumptions about them.
+func BuildSurgePod(target *corev1.Pod, dep *appsv1.Deployment, stripLabelPrefixes []string) *corev1.Pod {
 	labels := map[string]string{}
 	for k, v := range target.Labels {
-		if k == podTemplateHashLabel || isOperatorManagedLabel(k) {
+		if k == podTemplateHashLabel || hasAnyPrefix(k, stripLabelPrefixes) {
 			continue
 		}
 		labels[k] = v

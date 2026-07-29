@@ -115,9 +115,9 @@ func TestBuildSurgePod(t *testing.T) {
 			Name:      "web-abc123-xyz",
 			Namespace: "shop",
 			Labels: map[string]string{
-				"app":                          "web",
-				"pod-template-hash":            "abc123",
-				"kube-vnet.system/net.cluster": "egress",
+				"app":                    "web",
+				"pod-template-hash":      "abc123",
+				"injected.example.com/x": "y",
 			},
 			Annotations: map[string]string{
 				"prometheus.io/scrape":                             "true",
@@ -131,7 +131,7 @@ func TestBuildSurgePod(t *testing.T) {
 	}
 	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "shop", UID: "dep-uid"}}
 
-	s := BuildSurgePod(target, dep)
+	s := BuildSurgePod(target, dep, []string{"injected.example.com/"})
 
 	if s.Name != "web-hasurge" {
 		t.Errorf("name %q", s.Name)
@@ -142,8 +142,8 @@ func TestBuildSurgePod(t *testing.T) {
 	if _, ok := s.Labels["pod-template-hash"]; ok {
 		t.Error("pod-template-hash must be stripped so the RS ignores the surge pod")
 	}
-	if _, ok := s.Labels["kube-vnet.system/net.cluster"]; ok {
-		t.Error("operator-managed kube-vnet.system/ labels must be stripped (admission policy rejects them)")
+	if _, ok := s.Labels["injected.example.com/x"]; ok {
+		t.Error("labels matching a configured strip prefix must be dropped")
 	}
 	if s.Labels["app"] != "web" {
 		t.Error("app label must be kept so the Service routes to it")

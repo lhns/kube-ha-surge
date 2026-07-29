@@ -20,7 +20,7 @@ import (
 )
 
 func i32(i int32) *int32 { return &i }
-func pbool(b bool) *bool  { return &b }
+func pbool(b bool) *bool { return &b }
 
 // build a Deployment -> ReplicaSet -> Pod owner chain.
 func chain(ns, dep string, replicas int32, opted bool) (*appsv1.Deployment, *appsv1.ReplicaSet, *corev1.Pod) {
@@ -50,7 +50,7 @@ func chain(ns, dep string, replicas int32, opted bool) (*appsv1.Deployment, *app
 func handlerWith(objs ...client.Object) *Handler {
 	sch := clientgoscheme.Scheme
 	c := fake.NewClientBuilder().WithScheme(sch).WithObjects(objs...).Build()
-	h := NewHandler(c, 120*time.Second, logr.Discard())
+	h := NewHandler(c, 120*time.Second, nil, logr.Discard())
 	return h
 }
 
@@ -130,7 +130,7 @@ func TestHandle_SingleReplica_CreatesSurgeAndDenies429(t *testing.T) {
 
 func TestHandle_SurgeReady_Allows(t *testing.T) {
 	d, rs, p := chain("x", "web", 1, true)
-	s := surge.BuildSurgePod(p, d)
+	s := surge.BuildSurgePod(p, d, nil)
 	s.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
 	h := handlerWith(d, rs, p, s)
 	resp := h.Handle(context.Background(), req(p))
@@ -141,7 +141,7 @@ func TestHandle_SurgeReady_Allows(t *testing.T) {
 
 func TestHandle_SurgeNotReady_Denies429(t *testing.T) {
 	d, rs, p := chain("x", "web", 1, true)
-	s := surge.BuildSurgePod(p, d)
+	s := surge.BuildSurgePod(p, d, nil)
 	s.CreationTimestamp = metav1.NewTime(time.Now())
 	h := handlerWith(d, rs, p, s)
 	resp := h.Handle(context.Background(), req(p))
@@ -152,7 +152,7 @@ func TestHandle_SurgeNotReady_Denies429(t *testing.T) {
 
 func TestHandle_SurgeTimeout_FailsOpen(t *testing.T) {
 	d, rs, p := chain("x", "web", 1, true)
-	s := surge.BuildSurgePod(p, d)
+	s := surge.BuildSurgePod(p, d, nil)
 	s.CreationTimestamp = metav1.NewTime(time.Now().Add(-10 * time.Minute))
 	h := handlerWith(d, rs, p, s)
 	h.now = func() time.Time { return time.Now() }
@@ -163,7 +163,7 @@ func TestHandle_SurgeTimeout_FailsOpen(t *testing.T) {
 
 func TestHandle_SurgePodItself_Allows(t *testing.T) {
 	d, rs, p := chain("x", "web", 1, true)
-	s := surge.BuildSurgePod(p, d)
+	s := surge.BuildSurgePod(p, d, nil)
 	h := handlerWith(d, rs, p, s)
 	if !h.Handle(context.Background(), req(s)).Allowed {
 		t.Fatal("evicting the surge pod itself should be allowed")

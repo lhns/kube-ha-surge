@@ -9,7 +9,7 @@ Webhook serving certificate. Two sources, selected by .Values.webhook.certSource
   helm         — generate a self-signed CA + serving cert with genCA /
                  genSignedCert (once; reused across upgrades via `lookup`) and
                  write it into the Secret here. The CA is injected into the
-                 webhook config's caBundle. Pattern per kube-vnet ADR 0034.
+                 webhook config's caBundle.
 */ -}}
 {{- if eq .Values.webhook.certSource "cert-manager" }}
 apiVersion: cert-manager.io/v1

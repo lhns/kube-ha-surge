@@ -27,6 +27,15 @@ replicaCount: 1
 # Wired to the manager's --max-surge-seconds flag.
 maxSurgeSeconds: 120
 
+# Label-key prefixes to drop from the cloned surge pod (the ReplicaSet's
+# pod-template-hash is always stripped). Use this for labels a controller injects
+# onto pods at runtime and re-derives on new pods — some clusters guard such
+# labels with admission policies that would reject a user-supplied value and
+# block the clone's creation. Cluster-specific; empty by default. Wired to the
+# manager's --strip-label-prefixes flag.
+#   stripLabelPrefixes: ["some-operator.example.com/"]
+stripLabelPrefixes: []
+
 serviceAccount:
   # create the operator ServiceAccount. When false, you must provide one and
   # bind the ClusterRole / leader-election Role yourself.
