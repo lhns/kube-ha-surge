@@ -6,6 +6,8 @@
 package surge
 
 import (
+	"strings"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,6 +41,25 @@ const (
 	// labels, not the hash) still routes to it.
 	podTemplateHashLabel = "pod-template-hash"
 )
+
+// OperatorManagedLabelPrefixes are label prefixes injected onto pods by other
+// operators at admission/runtime. A clone must NOT carry them: the owning
+// operator re-derives them, and some are guarded by admission policies that
+// reject any user-set value — e.g. kube-vnet's `kube-vnet.system/` labels are
+// denied by a ValidatingAdmissionPolicy, which would block the surge pod's
+// creation. Extend this list for other such operators in your cluster.
+var OperatorManagedLabelPrefixes = []string{
+	"kube-vnet.system/",
+}
+
+func isOperatorManagedLabel(key string) bool {
+	for _, p := range OperatorManagedLabelPrefixes {
+		if strings.HasPrefix(key, p) {
+			return true
+		}
+	}
+	return false
+}
 
 // IsSurgePod reports whether a pod is one of our stand-ins.
 func IsSurgePod(pod *corev1.Pod) bool {
@@ -123,7 +144,7 @@ func SurgeName(deployment string) string {
 func BuildSurgePod(target *corev1.Pod, dep *appsv1.Deployment) *corev1.Pod {
 	labels := map[string]string{}
 	for k, v := range target.Labels {
-		if k == podTemplateHashLabel {
+		if k == podTemplateHashLabel || isOperatorManagedLabel(k) {
 			continue
 		}
 		labels[k] = v

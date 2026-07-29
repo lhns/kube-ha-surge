@@ -115,11 +115,12 @@ func TestBuildSurgePod(t *testing.T) {
 			Name:      "web-abc123-xyz",
 			Namespace: "shop",
 			Labels: map[string]string{
-				"app":              "web",
-				"pod-template-hash": "abc123",
+				"app":                          "web",
+				"pod-template-hash":            "abc123",
+				"kube-vnet.system/net.cluster": "egress",
 			},
 			Annotations: map[string]string{
-				"prometheus.io/scrape":                              "true",
+				"prometheus.io/scrape":                             "true",
 				"kubectl.kubernetes.io/last-applied-configuration": "{...}",
 			},
 		},
@@ -140,6 +141,9 @@ func TestBuildSurgePod(t *testing.T) {
 	}
 	if _, ok := s.Labels["pod-template-hash"]; ok {
 		t.Error("pod-template-hash must be stripped so the RS ignores the surge pod")
+	}
+	if _, ok := s.Labels["kube-vnet.system/net.cluster"]; ok {
+		t.Error("operator-managed kube-vnet.system/ labels must be stripped (admission policy rejects them)")
 	}
 	if s.Labels["app"] != "web" {
 		t.Error("app label must be kept so the Service routes to it")
