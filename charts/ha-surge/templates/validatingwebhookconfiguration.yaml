@@ -28,8 +28,29 @@ webhooks:
     failurePolicy: {{ .Values.webhook.failurePolicy }}
     matchPolicy: Equivalent
     timeoutSeconds: 30
+    # namespaceSelector is derived from .Values.defaultEnabled (ADR 0009): the
+    # apiserver gates on namespace labels before the webhook runs, so it must be
+    # broad enough for the intended scope.
     namespaceSelector:
-      {{- toYaml .Values.managedNamespaceSelector | nindent 6 }}
+      {{- if .Values.defaultEnabled }}
+      # Consulted for every namespace except explicit opt-outs and excludes.
+      matchExpressions:
+        - key: ha-surge.lhns.de/enabled
+          operator: NotIn
+          values: ["false"]
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values:
+            - kube-system
+            - {{ .Release.Namespace }}
+            {{- range .Values.excludeNamespaces }}
+            - {{ . }}
+            {{- end }}
+      {{- else }}
+      # Consulted only for namespaces explicitly enabled.
+      matchLabels:
+        ha-surge.lhns.de/enabled: "true"
+      {{- end }}
     rules:
       - apiGroups: [""]
         apiVersions: [v1]

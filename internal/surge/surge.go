@@ -13,14 +13,11 @@ import (
 )
 
 const (
-	// AnnotationEnabled on a Deployment opts its pods into make-before-break.
-	// Absent/"false" => the webhook passes evictions straight through.
+	// AnnotationEnabled is the single opt-in key, used at every level of the
+	// cascade: as an annotation on a Deployment and as a label on a Namespace.
+	// Value is "true"/"false"; absent falls through to the next level
+	// (Deployment > Namespace > chart default). See ResolveEnabled.
 	AnnotationEnabled = "ha-surge.lhns.de/enabled"
-
-	// NamespaceLabelManaged gates the webhook's namespaceSelector; only evictions
-	// in namespaces carrying it reach the operator (blast-radius limit). Enforced
-	// in the ValidatingWebhookConfiguration, not in code.
-	NamespaceLabelManaged = "ha-surge.lhns.de/managed"
 
 	// PodTemplateHashLabel is injected by the Deployment/ReplicaSet and is part of
 	// the RS selector but NOT the Service selector. Removing it from a pod detaches
@@ -41,9 +38,36 @@ const (
 	AnnotationDetachedAt = "ha-surge.lhns.de/detached-at"
 )
 
-// Enabled reports whether a Deployment has opted in.
-func Enabled(dep *appsv1.Deployment) bool {
-	return dep.Annotations[AnnotationEnabled] == "true"
+// ResolveEnabled applies the opt-in cascade: a Deployment annotation wins, else
+// the Namespace label, else the chart-wide default. Each string is "true" /
+// "false" / "" (absent → fall through).
+func ResolveEnabled(depAnnotation, nsLabel string, globalDefault bool) bool {
+	if v, ok := parseTriState(depAnnotation); ok {
+		return v
+	}
+	if v, ok := parseTriState(nsLabel); ok {
+		return v
+	}
+	return globalDefault
+}
+
+func parseTriState(s string) (val, set bool) {
+	switch s {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+// IsRecreate reports whether the Deployment uses the Recreate strategy, i.e. the
+// owner has declared its pods must never run two-at-once — so we must not detach
+// (the brief overlap during handoff would violate that). RollingUpdate (the
+// default) already tolerates the same overlap, so it's fine.
+func IsRecreate(dep *appsv1.Deployment) bool {
+	return dep.Spec.Strategy.Type == appsv1.RecreateDeploymentStrategyType
 }
 
 // IsDetached reports whether this operator has detached the pod.

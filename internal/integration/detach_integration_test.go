@@ -86,7 +86,7 @@ func TestDetachFlow(t *testing.T) {
 	}
 	markReady(t, ctx, pod)
 
-	h := eviction.NewHandler(k8sClient, 120*time.Second, logr.Discard())
+	h := eviction.NewHandler(k8sClient, 120*time.Second, false, logr.Discard())
 
 	// 1. First eviction: must deny 429 and detach the pod on the real apiserver.
 	resp := h.Handle(ctx, evictReq(pod))
@@ -132,5 +132,62 @@ func TestDetachFlow(t *testing.T) {
 	err := k8sClient.Get(ctx, types.NamespacedName{Namespace: ns.Name, Name: pod.Name}, &corev1.Pod{})
 	if !apierrors.IsNotFound(err) {
 		t.Fatalf("detached cover pod should have been deleted, got err=%v", err)
+	}
+}
+
+// TestEnabledViaNamespaceLabel proves the cascade enables a workload from the
+// NAMESPACE label alone (no Deployment annotation, defaultEnabled=false), and
+// exercises the handler's namespace Get against a real apiserver.
+func TestEnabledViaNamespaceLabel(t *testing.T) {
+	ctx := context.Background()
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+		Name:   "nslabel-it",
+		Labels: map[string]string{surge.AnnotationEnabled: "true"},
+	}}
+	if err := k8sClient.Create(ctx, ns); err != nil {
+		t.Fatal(err)
+	}
+	tmpl := corev1.PodTemplateSpec{
+		ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api", "pod-template-hash": "H"}},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx"}}},
+	}
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: ns.Name}, // NO enabled annotation
+		Spec: appsv1.DeploymentSpec{
+			Replicas: p32(1),
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "api"}},
+			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api"}}, Spec: tmpl.Spec},
+		},
+	}
+	if err := k8sClient.Create(ctx, dep); err != nil {
+		t.Fatal(err)
+	}
+	rs := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "api-rs", Namespace: ns.Name, OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: "api", UID: dep.UID, Controller: pb(true)}}},
+		Spec:       appsv1.ReplicaSetSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "api", "pod-template-hash": "H"}}, Template: tmpl},
+	}
+	if err := k8sClient.Create(ctx, rs); err != nil {
+		t.Fatal(err)
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "api-rs-abc", Namespace: ns.Name, Labels: map[string]string{"app": "api", "pod-template-hash": "H"}, OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: "api-rs", UID: rs.UID, Controller: pb(true)}}},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx"}}},
+	}
+	if err := k8sClient.Create(ctx, pod); err != nil {
+		t.Fatal(err)
+	}
+	markReady(t, ctx, pod)
+
+	h := eviction.NewHandler(k8sClient, 120*time.Second, false, logr.Discard()) // defaultEnabled=false
+	resp := h.Handle(ctx, evictReq(pod))
+	if resp.Allowed || resp.Result == nil || resp.Result.Code != 429 {
+		t.Fatalf("namespace-label enablement should detach + 429, got %+v", resp)
+	}
+	got := &corev1.Pod{}
+	if err := k8sClient.Get(ctx, types.NamespacedName{Namespace: ns.Name, Name: pod.Name}, got); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.Labels["pod-template-hash"]; ok || !surge.IsDetached(got) {
+		t.Fatalf("pod should be detached via namespace-label enablement: %v", got.Labels)
 	}
 }

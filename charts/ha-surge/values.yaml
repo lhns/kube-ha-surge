@@ -17,9 +17,24 @@ image:
   # pullSecrets is a list of references to secrets in the release namespace.
   pullSecrets: []
 
-# Number of operator replicas. Leader election is on by default — one replica
-# is normal; scale to 2 for HA of the operator itself across nodes.
-replicaCount: 1
+# Number of operator replicas. Defaults to 2 for HA (ADR 0010): the operator is
+# a webhook on the eviction path, so it must stay available *during* node drains.
+# With leader election on, both replicas serve admission while only the leader
+# runs the GC controller.
+replicaCount: 2
+
+# PodDisruptionBudget so a node drain can't take both operator replicas at once.
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+# Spread the operator replicas across nodes. Soft (ScheduleAnyway) so a small or
+# heavily-drained cluster still schedules; set whenUnsatisfiable: DoNotSchedule
+# for a hard guarantee. Applied to the manager pod.
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
 
 # Maximum time (seconds) the eviction webhook holds an eviction waiting for the
 # ReplicaSet's replacement to become Ready before it fails open and allows the
@@ -58,13 +73,24 @@ webhook:
   # See ADR 0004. Overriding to Fail is unsupported and dangerous.
   failurePolicy: Ignore
 
-# namespaceSelector for the ValidatingWebhookConfiguration. Used verbatim. Only
-# evictions in namespaces carrying this label reach the operator — this is the
-# opt-in blast-radius gate (ADR 0004). Label a namespace with
-# `ha-surge.lhns.de/managed=true` to enroll it.
-managedNamespaceSelector:
-  matchLabels:
-    ha-surge.lhns.de/managed: "true"
+# Opt-in cascade (ADR 0009). Effective enablement for a workload is resolved as:
+#   Deployment annotation  ha-surge.lhns.de/enabled  ("true"/"false")
+#   ?? Namespace label      ha-surge.lhns.de/enabled  ("true"/"false")
+#   ?? defaultEnabled (below)
+#
+# defaultEnabled is the cluster-wide floor. It ALSO decides the webhook's
+# namespaceSelector (rendered in validatingwebhookconfiguration.yaml), because
+# the apiserver gates on namespace labels before the webhook runs:
+#   false (default) -> the webhook is only consulted for namespaces explicitly
+#                      labelled `ha-surge.lhns.de/enabled=true` (small blast radius).
+#   true            -> consulted for ALL namespaces except those labelled
+#                      `ha-surge.lhns.de/enabled=false` and the excludes below
+#                      (kube-system + the release namespace are ALWAYS excluded).
+defaultEnabled: false
+
+# Extra namespaces to never touch when defaultEnabled=true. kube-system and the
+# operator's own release namespace are always excluded regardless.
+excludeNamespaces: []
 
 # Pod & container security context. Distroless defaults: non-root uid 65532,
 # read-only root FS, all caps dropped, RuntimeDefault seccomp.

@@ -61,7 +61,20 @@ func readyPod(ns, name, app string, detached bool) *corev1.Pod {
 
 func handlerWith(objs ...client.Object) *Handler {
 	c := fake.NewClientBuilder().WithScheme(clientgoscheme.Scheme).WithObjects(objs...).Build()
-	return NewHandler(c, 120*time.Second, logr.Discard())
+	return NewHandler(c, 120*time.Second, false, logr.Discard())
+}
+
+func handlerWithDefaultEnabled(objs ...client.Object) *Handler {
+	c := fake.NewClientBuilder().WithScheme(clientgoscheme.Scheme).WithObjects(objs...).Build()
+	return NewHandler(c, 120*time.Second, true, logr.Discard())
+}
+
+func nsWith(name, enabled string) *corev1.Namespace {
+	n := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	if enabled != "" {
+		n.Labels = map[string]string{surge.AnnotationEnabled: enabled}
+	}
+	return n
 }
 
 func req(pod *corev1.Pod) admission.Request {
@@ -164,4 +177,38 @@ func TestHandle_Detached_DeploymentGone_Allows(t *testing.T) {
 	_, _, p := chain("x", "web", 1, true)
 	det := surge.MarkDetached(p, "web", time.Now())
 	allowed(t, handlerWith(det).Handle(context.Background(), req(det))) // no Deployment in the client
+}
+
+// --- opt-in cascade (chart default -> namespace label -> deployment annotation) ---
+
+func TestHandle_NamespaceLabelEnables_Detaches(t *testing.T) {
+	d, rs, p := chain("x", "web", 1, false) // no deployment annotation
+	denied429(t, handlerWith(d, rs, p, nsWith("x", "true")).Handle(context.Background(), req(p)))
+}
+
+func TestHandle_DeploymentOptOut_OverridesNamespaceEnable(t *testing.T) {
+	d, rs, p := chain("x", "web", 1, false)
+	d.Annotations = map[string]string{surge.AnnotationEnabled: "false"} // explicit opt-out
+	allowed(t, handlerWith(d, rs, p, nsWith("x", "true")).Handle(context.Background(), req(p)))
+}
+
+func TestHandle_DefaultEnabled_Detaches(t *testing.T) {
+	d, rs, p := chain("x", "web", 1, false) // nothing set anywhere
+	denied429(t, handlerWithDefaultEnabled(d, rs, p, nsWith("x", "")).Handle(context.Background(), req(p)))
+}
+
+func TestHandle_DefaultEnabled_NamespaceOptOut_Allows(t *testing.T) {
+	d, rs, p := chain("x", "web", 1, false)
+	allowed(t, handlerWithDefaultEnabled(d, rs, p, nsWith("x", "false")).Handle(context.Background(), req(p)))
+}
+
+func TestHandle_DefaultEnabled_NsOptOut_DeploymentOptIn_Detaches(t *testing.T) {
+	d, rs, p := chain("x", "web", 1, true) // deployment annotation "true"
+	denied429(t, handlerWithDefaultEnabled(d, rs, p, nsWith("x", "false")).Handle(context.Background(), req(p)))
+}
+
+func TestHandle_RecreateStrategy_Allows(t *testing.T) {
+	d, rs, p := chain("x", "web", 1, true)
+	d.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
+	allowed(t, handlerWith(d, rs, p, nsWith("x", "true")).Handle(context.Background(), req(p)))
 }

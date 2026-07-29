@@ -42,6 +42,7 @@ spec:
             - --metrics-bind-address=:8080
             - --webhook-port=9443
             - --webhook-cert-dir=/tmp/k8s-webhook-server/serving-certs
+            - --default-enabled={{ .Values.defaultEnabled }}
           env:
             - name: POD_NAMESPACE
               valueFrom:
@@ -93,5 +94,14 @@ spec:
       {{- with .Values.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- range . }}
+        - labelSelector:
+            matchLabels:
+              {{- include "ha-surge.selectorLabels" $ | nindent 14 }}
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
       {{- end }}
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}

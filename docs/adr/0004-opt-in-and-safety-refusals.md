@@ -1,8 +1,14 @@
 # 0004 — Opt-in, safety refusals, and fail-open
 
-Status: Accepted
+Status: Superseded by [0009](0009-enabled-cascade-and-strategy-refusal.md)
 
 Date: 2026-07-29
+
+> **Note:** the two-marker opt-in model below (namespace `managed` label +
+> Deployment `enabled` annotation) is superseded by the single-key **enabled
+> cascade** in [0009](0009-enabled-cascade-and-strategy-refusal.md). The
+> **safety-refusal principle and the fail-open posture in this ADR still hold**;
+> 0009 only replaces the enrolment mechanism and adds the `Recreate` refusal.
 
 ## Context
 

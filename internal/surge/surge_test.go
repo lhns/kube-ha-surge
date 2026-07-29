@@ -11,17 +11,40 @@ import (
 
 func i32(i int32) *int32 { return &i }
 
-func TestEnabled(t *testing.T) {
-	if Enabled(&appsv1.Deployment{}) {
-		t.Fatal("no annotation => not enabled")
+func TestResolveEnabled(t *testing.T) {
+	cases := []struct {
+		dep, ns   string
+		def, want bool
+	}{
+		{"", "", false, false},          // nothing set -> default false
+		{"", "", true, true},            // nothing set -> default true
+		{"true", "", false, true},       // deployment wins
+		{"false", "", true, false},      // deployment wins
+		{"", "true", false, true},       // namespace over default
+		{"", "false", true, false},      // namespace over default
+		{"true", "false", false, true},  // deployment over namespace
+		{"false", "true", true, false},  // deployment over namespace
+		{"weird", "", true, true},       // unrecognized -> fall through
+		{"weird", "false", true, false}, // unrecognized dep -> namespace
 	}
-	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{AnnotationEnabled: "true"}}}
-	if !Enabled(d) {
-		t.Fatal("annotation true => enabled")
+	for _, c := range cases {
+		if got := ResolveEnabled(c.dep, c.ns, c.def); got != c.want {
+			t.Errorf("ResolveEnabled(%q,%q,%v)=%v want %v", c.dep, c.ns, c.def, got, c.want)
+		}
 	}
-	d.Annotations[AnnotationEnabled] = "false"
-	if Enabled(d) {
-		t.Fatal("annotation false => not enabled")
+}
+
+func TestIsRecreate(t *testing.T) {
+	if IsRecreate(&appsv1.Deployment{}) {
+		t.Error("unset strategy => not Recreate")
+	}
+	rolling := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Strategy: appsv1.DeploymentStrategy{Type: appsv1.RollingUpdateDeploymentStrategyType}}}
+	if IsRecreate(rolling) {
+		t.Error("RollingUpdate => not Recreate")
+	}
+	recreate := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}}}
+	if !IsRecreate(recreate) {
+		t.Error("Recreate => true")
 	}
 }
 

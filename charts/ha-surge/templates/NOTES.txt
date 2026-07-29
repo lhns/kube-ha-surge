@@ -18,15 +18,38 @@ Webhook serving certificate source: {{ .Values.webhook.certSource }}
   upgrades and does not rotate on its own.
 {{- end }}
 
-Opt in a workload in two steps:
+Enablement cascades on ONE key, ha-surge.lhns.de/enabled ("true"/"false"):
 
-  1. Label the workload's namespace so its evictions reach the operator:
+  effective = Deployment annotation            (overrides everything)
+           ?? Namespace  label                 (namespace-wide default)
+           ?? chart .Values.defaultEnabled      ({{ .Values.defaultEnabled }})
 
-       kubectl label namespace <ns> ha-surge.lhns.de/managed=true
+An absent level falls through to the next. Safety refusals (Recreate strategy,
+RWO volume, already ≥2 replicas, Service-selects-on-hash) only ever skip — they
+never force a workload on.
 
-  2. Annotate the single-replica Deployment you want protected:
+{{ if .Values.defaultEnabled -}}
+defaultEnabled is TRUE: the operator is consulted for every namespace except
+kube-system, {{ .Release.Namespace }}{{ range .Values.excludeNamespaces }}, {{ . }}{{ end }}, and any namespace or Deployment
+explicitly labelled/annotated ha-surge.lhns.de/enabled=false. To exempt one:
 
-       kubectl annotate deployment <name> -n <ns> ha-surge.lhns.de/enabled=true
+    kubectl label namespace <ns> ha-surge.lhns.de/enabled=false
+{{- else -}}
+defaultEnabled is FALSE (default): the apiserver only routes evictions to the
+operator for namespaces labelled ha-surge.lhns.de/enabled=true, so enrol a
+namespace once and every single-replica Deployment in it is protected:
+
+    kubectl label namespace <ns> ha-surge.lhns.de/enabled=true
+
+Opt a single Deployment out (or in, in an otherwise-enabled namespace) with the
+same key as an annotation:
+
+    kubectl annotate deployment <name> -n <ns> ha-surge.lhns.de/enabled=false
+
+NOTE: with defaultEnabled=false a per-Deployment opt-in only takes effect if the
+namespace is itself labelled enabled=true — the apiserver gates on namespace
+labels before the operator ever sees the eviction.
+{{- end }}
 
 From then on, draining the node hosting that Deployment's pod holds the
 eviction (HTTP 429, retried by `kubectl drain`) while the operator detaches the

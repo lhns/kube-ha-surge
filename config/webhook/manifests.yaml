@@ -10,9 +10,13 @@ webhooks:
     failurePolicy: Ignore
     matchPolicy: Equivalent
     timeoutSeconds: 30
+    # Static (kustomize / `make deploy`) form matching defaultEnabled=false:
+    # consulted only for namespaces labelled ha-surge.lhns.de/enabled=true. The
+    # Helm chart renders this from .Values.defaultEnabled (ADR 0009) and uses a
+    # broader matchExpressions form when defaultEnabled=true.
     namespaceSelector:
       matchLabels:
-        ha-surge.lhns.de/managed: "true"
+        ha-surge.lhns.de/enabled: "true"
     rules:
       - apiGroups: [""]
         apiVersions: [v1]

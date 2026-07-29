@@ -48,19 +48,30 @@ The Deployment should be `Available` and the webhook registered.
 
 ## 2. Opt in a namespace
 
-The webhook only sees evictions in namespaces you enroll. This is the
-blast-radius gate — ha-surge never touches a namespace you didn't label.
+Enablement rides on one key, `ha-surge.lhns.de/enabled`, resolved most-specific
+wins: **Deployment annotation → Namespace label → chart `defaultEnabled`** (which
+defaults to `false`). With the default, the webhook only sees evictions in
+namespaces you label — the blast-radius gate — so the usual move is to enable a
+whole namespace at once:
 
 ```sh
-kubectl label namespace my-app ha-surge.lhns.de/managed=true
+kubectl label namespace my-app ha-surge.lhns.de/enabled=true
 ```
 
-## 3. Opt in a Deployment
+Every single-replica Deployment in `my-app` is now covered — no per-Deployment
+annotation needed.
 
-Per-workload opt-in is an annotation on the Deployment:
+> To cover the whole cluster instead, install with `--set defaultEnabled=true`
+> (`kube-system` and the release namespace are always excluded). See the
+> [reference](reference.md#opt-in-contract--the-enabled-cascade).
+
+## 3. Override a single Deployment (optional)
+
+Use the same key as an annotation to override the namespace default for one
+workload — e.g. opt a noisy Deployment *out* of an otherwise-enabled namespace:
 
 ```sh
-kubectl annotate deployment my-app -n my-app ha-surge.lhns.de/enabled=true
+kubectl annotate deployment noisy -n my-app ha-surge.lhns.de/enabled=false
 ```
 
 Or in the manifest:
@@ -72,15 +83,21 @@ metadata:
   name: my-app
   namespace: my-app
   annotations:
-    ha-surge.lhns.de/enabled: "true"
+    ha-surge.lhns.de/enabled: "true"   # redundant if the namespace is enabled
 spec:
   replicas: 1
   # ...
 ```
 
-ha-surge only covers Deployments that are **single-replica** and whose pods do
-**not** mount a `ReadWriteOnce` volume. Anything else is passed through
-untouched (see [limitations](limitations.md)).
+> The annotation only *overrides* within a namespace the webhook already sees.
+> With `defaultEnabled: false`, annotating a Deployment in an **unlabelled**
+> namespace has no effect — label the namespace first (see
+> [limitations](limitations.md)).
+
+ha-surge only covers Deployments that are **single-replica**, use a
+**RollingUpdate** strategy (not `Recreate`), and whose pods do **not** mount a
+`ReadWriteOnce` volume. Anything else is passed through untouched (see
+[limitations](limitations.md)).
 
 ## 4. Watch it work
 

@@ -25,14 +25,16 @@ import (
 type Handler struct {
 	Client   client.Client
 	MaxSurge time.Duration
-	Log      logr.Logger
+	// DefaultEnabled is the bottom of the opt-in cascade (chart .Values.defaultEnabled).
+	DefaultEnabled bool
+	Log            logr.Logger
 	// now is overridable in tests.
 	now func() time.Time
 }
 
 // NewHandler builds a Handler with a real clock.
-func NewHandler(c client.Client, maxSurge time.Duration, log logr.Logger) *Handler {
-	return &Handler{Client: c, MaxSurge: maxSurge, Log: log, now: time.Now}
+func NewHandler(c client.Client, maxSurge time.Duration, defaultEnabled bool, log logr.Logger) *Handler {
+	return &Handler{Client: c, MaxSurge: maxSurge, DefaultEnabled: defaultEnabled, Log: log, now: time.Now}
 }
 
 // Handle is the admission entrypoint. Every branch that can't or needn't help
@@ -69,11 +71,15 @@ func (h *Handler) Handle(ctx context.Context, req admission.Request) admission.R
 	if dep == nil {
 		return admission.Allowed("not Deployment-owned")
 	}
-	if !surge.Enabled(dep) {
-		return admission.Allowed("not opted in")
+	// Opt-in cascade: Deployment annotation > Namespace label > chart default.
+	if !surge.ResolveEnabled(dep.Annotations[surge.AnnotationEnabled], h.namespaceEnabled(ctx, pod.Namespace), h.DefaultEnabled) {
+		return admission.Allowed("not enabled")
 	}
 	if surge.AlreadyHA(dep) {
 		return admission.Allowed("already multi-replica")
+	}
+	if surge.IsRecreate(dep) {
+		return admission.Allowed("Recreate strategy; must not run two at once")
 	}
 	if surge.HasReadWriteOnceVolume(pod, h.pvcAccessModes(ctx, pod)) {
 		return admission.Allowed("single-writer (RWO) volume; replacement can't co-mount it")
@@ -137,6 +143,17 @@ func (h *Handler) serviceSelectsOnHash(ctx context.Context, pod *corev1.Pod) boo
 		}
 	}
 	return false
+}
+
+// namespaceEnabled returns the ha-surge `enabled` label on the namespace (empty
+// on absent or any lookup error, so a failure falls through to the chart default
+// rather than wedging).
+func (h *Handler) namespaceEnabled(ctx context.Context, ns string) string {
+	n := &corev1.Namespace{}
+	if err := h.Client.Get(ctx, types.NamespacedName{Name: ns}, n); err != nil {
+		return ""
+	}
+	return n.Labels[surge.AnnotationEnabled]
 }
 
 func (h *Handler) getDeployment(ctx context.Context, ns, name string) *appsv1.Deployment {

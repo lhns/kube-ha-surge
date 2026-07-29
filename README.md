@@ -77,15 +77,34 @@ helm install ha-surge oci://ghcr.io/lhns/charts/ha-surge \
   --set webhook.certSource=helm
 ```
 
-Opt in a workload in two steps:
+Opt workloads in with one key, `ha-surge.lhns.de/enabled`, that cascades
+Deployment annotation → Namespace label → chart `defaultEnabled` (most specific
+wins). The common case is **one label on the namespace** — every single-replica
+Deployment in it is then covered:
 
 ```sh
-# 1. Enroll the namespace (gates the eviction webhook — blast-radius limit).
-kubectl label namespace my-app ha-surge.lhns.de/managed=true
-
-# 2. Opt the specific single-replica Deployment in.
-kubectl annotate deployment my-app -n my-app ha-surge.lhns.de/enabled=true
+kubectl label namespace my-app ha-surge.lhns.de/enabled=true
 ```
+
+Opt a single Deployment out of an otherwise-enabled namespace (same key, as an
+annotation):
+
+```sh
+kubectl annotate deployment noisy -n my-app ha-surge.lhns.de/enabled=false
+```
+
+Or cover the whole cluster at install time and exempt by exception
+(`kube-system` and the release namespace are always excluded):
+
+```sh
+helm install ha-surge oci://ghcr.io/lhns/charts/ha-surge \
+  -n ha-surge-system --create-namespace --set defaultEnabled=true
+```
+
+> With the default `defaultEnabled=false`, a Deployment annotation only takes
+> effect if its namespace is at least labelled `enabled=true` — the apiserver
+> gates the webhook on namespace labels first. See
+> [`docs/limitations.md`](docs/limitations.md).
 
 Now drain the node hosting that pod and watch the old pod detach and cover while
 the ReplicaSet's replacement becomes Ready, then the eviction complete — with no
@@ -109,6 +128,8 @@ ha-surge deliberately refuses to act where it can't help safely:
   (Multi-Attach). Those evictions pass straight through.
 - **Only Deployments** are supported in v1. StatefulSets (stable identity,
   ordered volumes) are out of scope.
+- **`strategy: Recreate` Deployments** are passed through — the strategy declares
+  "never two at once", which surging would violate.
 - **Don't add a blocking `minAvailable` PDB** to a covered workload — the PDB
   refuses the eviction *before* the webhook is consulted, so the detach never
   happens. Let ha-surge own the disruption path.

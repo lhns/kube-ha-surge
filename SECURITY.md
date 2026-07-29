@@ -32,9 +32,9 @@ while the ReplicaSet brings up a replacement. Its security boundary is that it
 only acts on opted-in workloads and only ever mutates the pod being evicted.
 Treat as reportable:
 
-- the operator detaching a pod for a workload that did **not** opt in
-  (namespace not labelled `ha-surge.lhns.de/managed=true`, or Deployment not
-  annotated `ha-surge.lhns.de/enabled=true`)
+- the operator detaching a pod for a workload that did **not** opt in — i.e. one
+  whose resolved `ha-surge.lhns.de/enabled` (Deployment annotation → Namespace
+  label → chart `defaultEnabled`) is not `true`
 - the operator mutating a pod in a way that escalates its privilege (extra
   volumes, serviceAccount, securityContext, or host access it should not have)
 - a tenant using the eviction webhook to **block** evictions past the
@@ -54,9 +54,10 @@ here.
   node drain — availability of the drain path outranks the coverage feature.
 - **Cluster-admin can defeat ha-surge**, as can anyone who can stop the
   operator, edit its RBAC, or remove the ValidatingWebhookConfiguration.
-- **A namespace owner with `patch namespace` can opt in or out** by adding or
-  removing the `ha-surge.lhns.de/managed=true` label. This is the intended
-  opt-in control, not a boundary.
+- **A namespace owner with `patch namespace` can opt in or out** by setting or
+  removing the `ha-surge.lhns.de/enabled` label; a Deployment owner can override
+  per-workload with the same annotation. This is the intended opt-in control, not
+  a boundary.
 - **RWO / single-writer workloads are passed through, not helped.** The
   ReplicaSet's replacement can't co-mount a `ReadWriteOnce` volume the detached
   pod still holds (Multi-Attach), so such evictions are allowed immediately with

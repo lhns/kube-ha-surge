@@ -32,13 +32,14 @@ var (
 
 func main() {
 	var (
-		metricsAddr  string
-		probeAddr    string
-		leaderElect  bool
-		maxSurgeSecs int
-		certDir      string
-		webhookPort  int
-		showVersion  bool
+		metricsAddr    string
+		probeAddr      string
+		leaderElect    bool
+		maxSurgeSecs   int
+		certDir        string
+		webhookPort    int
+		defaultEnabled bool
+		showVersion    bool
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "address the metric endpoint binds to")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "address the health probe binds to")
@@ -46,6 +47,7 @@ func main() {
 	flag.IntVar(&maxSurgeSecs, "max-surge-seconds", 120, "max time to hold an eviction waiting for a stand-in before failing open")
 	flag.StringVar(&certDir, "webhook-cert-dir", "/tmp/k8s-webhook-server/serving-certs", "directory holding the webhook serving cert (tls.crt/tls.key)")
 	flag.IntVar(&webhookPort, "webhook-port", 9443, "port the webhook server binds to")
+	flag.BoolVar(&defaultEnabled, "default-enabled", false, "cluster-wide default for the opt-in cascade when neither the Deployment annotation nor the Namespace label sets ha-surge.lhns.de/enabled")
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
@@ -94,7 +96,7 @@ func main() {
 	}
 
 	mgr.GetWebhookServer().Register("/validate-eviction", &webhook.Admission{
-		Handler: eviction.NewHandler(directClient, maxSurge, ctrl.Log.WithName("webhook")),
+		Handler: eviction.NewHandler(directClient, maxSurge, defaultEnabled, ctrl.Log.WithName("webhook")),
 	})
 
 	if err := controller.NewDetachReconciler(mgr.GetClient(), ctrl.Log.WithName("controller")).

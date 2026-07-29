@@ -2,14 +2,50 @@
 
 Every label, annotation, flag, and Helm value ha-surge understands.
 
-## Opt-in contract
+## Opt-in contract — the enabled cascade
 
-ha-surge acts only when **both** gates are set.
+A single key, **`ha-surge.lhns.de/enabled`** (`"true"`/`"false"`), is read at
+three levels; the most specific one that is set wins (ADR 0009):
 
-| Gate | Where | Value | Meaning |
+```
+effective = Deployment annotation  ha-surge.lhns.de/enabled   (overrides all)
+         ?? Namespace  label       ha-surge.lhns.de/enabled   (namespace default)
+         ?? chart .Values.defaultEnabled                       (cluster floor, default false)
+```
+
+| Level | Where | Value | Meaning |
 | --- | --- | --- | --- |
-| `ha-surge.lhns.de/managed` | **Namespace** label | `"true"` | The eviction webhook's `namespaceSelector`. Only evictions in labelled namespaces reach the operator (blast-radius limit). Enforced in the `ValidatingWebhookConfiguration`, not in code. |
-| `ha-surge.lhns.de/enabled` | **Deployment** annotation | `"true"` | Per-workload opt-in. Absent/`"false"` → the webhook passes the workload's evictions straight through. |
+| Deployment | annotation `ha-surge.lhns.de/enabled` | `"true"`/`"false"` | Per-workload override. Absent → fall through to the namespace. |
+| Namespace | label `ha-surge.lhns.de/enabled` | `"true"`/`"false"` | Namespace-wide default **and** webhook scope (see below). Absent → fall through to `defaultEnabled`. |
+| Cluster | value `defaultEnabled` | `true`/`false` (default `false`) | Cluster-wide floor when neither level above is set. |
+
+**Scope is gated at the apiserver, not just in code.** The webhook's
+`namespaceSelector` is rendered from `defaultEnabled`, because the apiserver
+evaluates it (on namespace **labels**) before the operator runs:
+
+- `defaultEnabled: false` → `matchLabels {ha-surge.lhns.de/enabled: "true"}`: the
+  operator is consulted **only** for namespaces labelled enabled.
+- `defaultEnabled: true` → `matchExpressions`: every namespace except those
+  labelled `enabled=false`, `kube-system`, the release namespace, and any
+  `excludeNamespaces`.
+
+Consequence: with `defaultEnabled: false`, a lone Deployment annotation only takes
+effect if its **namespace** is at least labelled `enabled=true` (see
+[limitations](limitations.md)).
+
+## Safety refusals
+
+Independent of enablement, the operator **skips** (allows the eviction untouched)
+when surging is impossible or wrong — enablement only decides *may we*, never
+*force on*:
+
+| Refusal | Why |
+| --- | --- |
+| `spec.strategy.type: Recreate` | The owner declared "never two at once"; surging would violate it. (RollingUpdate already tolerates overlap.) |
+| Mounts a `ReadWriteOnce`/single-writer PVC | A cover pod can't co-mount it (Multi-Attach); it would only stall. |
+| Already `replicas >= 2` | Normal replication + PDB already cover disruption. |
+| Owner is not a Deployment | Out of scope (StatefulSet/bare pod/Job). |
+| A Service selects on `pod-template-hash` | Detaching removes that label and would break routing. |
 
 ## Labels & annotations ha-surge sets
 
@@ -38,7 +74,8 @@ rest match the binary defaults.
 
 | Flag | Default | Helm value | Meaning |
 | --- | --- | --- | --- |
-| `--leader-elect` | off | `leaderElection.enabled` | Enable leader election (lease in the release namespace). |
+| `--leader-elect` | off | `leaderElection.enabled` | Enable leader election (lease in the release namespace). Both replicas serve admission; only the leader runs the GC controller. |
+| `--default-enabled` | `false` | `defaultEnabled` | Cluster-wide floor of the enabled cascade (bottom level). Also drives the rendered `namespaceSelector`. |
 | `--max-surge-seconds` | `120` | `maxSurgeSeconds` | Max time the webhook holds an eviction waiting for the ReplicaSet's replacement to become Ready before failing open and allowing it. |
 | `--health-probe-bind-address` | `:8081` | fixed | Health/readiness probe address (`/healthz`, `/readyz`). |
 | `--metrics-bind-address` | `:8080` | fixed | Metrics address. |
@@ -54,14 +91,18 @@ rest match the binary defaults.
 | `image.tag` | `""` | Image tag; defaults to the chart `appVersion` when empty. |
 | `image.pullPolicy` | `IfNotPresent` | Image pull policy. |
 | `image.pullSecrets` | `[]` | imagePullSecrets for the pod. |
-| `replicaCount` | `1` | Operator replicas. Leader election makes 2 safe for operator HA. |
+| `replicaCount` | `2` | Operator replicas. Defaults to 2 for HA (ADR 0010): the operator is on the eviction path, so it must stay up during drains. Both serve admission; only the leader runs GC. |
+| `podDisruptionBudget.enabled` | `true` | Render a PDB so a drain can't take both replicas at once. |
+| `podDisruptionBudget.maxUnavailable` | `1` | Keeps ≥1 operator replica available during a node drain. |
+| `topologySpreadConstraints` | `hostname`, `maxSkew: 1`, `ScheduleAnyway` | Spread the operator replicas across nodes (soft; set `DoNotSchedule` for a hard guarantee). |
 | `maxSurgeSeconds` | `120` | Wired to `--max-surge-seconds`. |
+| `defaultEnabled` | `false` | Cluster-wide floor of the enabled cascade; also renders the webhook `namespaceSelector` (ADR 0009). Wired to `--default-enabled`. |
+| `excludeNamespaces` | `[]` | Extra namespaces never touched when `defaultEnabled: true` (`kube-system` + release namespace always excluded). |
 | `serviceAccount.create` | `true` | Create the operator ServiceAccount. |
 | `rbac.create` | `true` | Create the ClusterRole + ClusterRoleBinding. |
-| `leaderElection.enabled` | `true` | Enable leader election + its namespaced Role. |
+| `leaderElection.enabled` | `true` | Enable leader election + its namespaced Role. Required for safe multi-replica HA. |
 | `webhook.certSource` | `cert-manager` | `cert-manager` (Issuer + Certificate + cainjector) or `helm` (self-signed `genCA`/`genSignedCert`, CA injected into `caBundle`). |
 | `webhook.failurePolicy` | `Ignore` | Webhook failure policy. **Keep `Ignore`** — fail-open is mandatory (ADR 0004). |
-| `managedNamespaceSelector` | `matchLabels: {ha-surge.lhns.de/managed: "true"}` | Used verbatim as the webhook's `namespaceSelector`. |
 | `podSecurityContext` | non-root uid 65532, RuntimeDefault seccomp | Pod security context. |
 | `securityContext` | no-priv-esc, RO rootfs, drop ALL, uid 65532 | Container security context. |
 | `resources` | 50m/64Mi req, 500m/256Mi lim | Manager resources. |
@@ -97,6 +138,7 @@ The `ha-surge-manager` ClusterRole grants:
 | API group | Resources | Verbs |
 | --- | --- | --- |
 | core (`""`) | `pods` | get, list, watch, patch, delete |
+| core (`""`) | `namespaces` | get, list, watch |
 | core (`""`) | `persistentvolumeclaims` | get, list, watch |
 | core (`""`) | `services` | get, list, watch |
 | core (`""`) | `events` | create, patch |
@@ -105,7 +147,8 @@ The `ha-surge-manager` ClusterRole grants:
 The `pods` `patch` verb is what detaches the doomed pod (removing its
 `pod-template-hash` label); `services` `get`/`list`/`watch` lets the webhook
 check whether a Service selects on `pod-template-hash` (which detaching would
-break) before acting.
+break) before acting; `namespaces` `get`/`list`/`watch` reads the namespace-level
+`enabled` label for the opt-in cascade (ADR 0009).
 
 Plus a namespaced leader-election Role (`coordination.k8s.io` leases + events)
 in the release namespace.

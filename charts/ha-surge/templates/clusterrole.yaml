@@ -28,6 +28,10 @@ rules:
   - apiGroups: [""]
     resources: [services]
     verbs: [get, list, watch]
+  # Namespaces: read the namespace-level `enabled` label for the opt-in cascade.
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list, watch]
   # Events for detach lifecycle diagnostics.
   - apiGroups: [""]
     resources: [events]

@@ -33,6 +33,30 @@ RWO volume both expect to be *the* `web-0` doesn't work. Supporting StatefulSets
 safely is a separate design problem (identity handoff, per-ordinal volumes) and
 is out of scope for v1. StatefulSet evictions pass straight through.
 
+## `Recreate`-strategy Deployments are passed through
+
+A Deployment with `spec.strategy.type: Recreate` has declared that it must
+**never run two copies at once** — that is precisely what `Recreate` means (tear
+the old pod down before starting the new one). Surging would briefly run two,
+violating that contract, so ha-surge detects `Recreate` and passes the eviction
+straight through. `RollingUpdate` (the default) already tolerates that overlap
+during its own rollouts, so it is covered normally. If you want coverage for a
+workload currently on `Recreate` and it *can* tolerate a momentary overlap,
+switch it to `RollingUpdate`.
+
+## Per-Deployment opt-in needs the namespace in scope (`defaultEnabled: false`)
+
+With the default `defaultEnabled: false`, the webhook's `namespaceSelector` only
+routes evictions from namespaces labelled `ha-surge.lhns.de/enabled=true` to the
+operator (the apiserver gates on namespace **labels** before the operator runs).
+So annotating a single Deployment `ha-surge.lhns.de/enabled=true` in an
+otherwise-unlabelled namespace has **no effect** — the eviction never reaches the
+operator to read the annotation. To protect one Deployment in such a namespace,
+either label the namespace `enabled=true` (and annotate the *other* Deployments
+`enabled=false`), or raise `defaultEnabled`. The Deployment annotation is for
+*overriding* within an in-scope namespace, not for pulling a namespace into
+scope. See [ADR 0009](adr/0009-enabled-cascade-and-strategy-refusal.md).
+
 ## Don't pair it with a blocking PodDisruptionBudget
 
 A PodDisruptionBudget with `minAvailable: 1` (or `maxUnavailable: 0`) on a

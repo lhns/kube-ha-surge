@@ -38,13 +38,22 @@ Pinning to an exact version is recommended.
     `--max-surge-seconds` timeout bounds the hold.
   - **Detach controller** that deletes the detached cover pod once the
     ReplicaSet's replacement is Ready.
-  - **Opt-in contract**: namespace label `ha-surge.lhns.de/managed=true` (gates
-    the webhook) plus Deployment annotation `ha-surge.lhns.de/enabled=true`
-    (per-workload). Safety refusals for RWO/single-writer volumes,
-    non-Deployment owners, already-multi-replica workloads, and Services that
-    select on `pod-template-hash`.
+  - **Opt-in cascade** on a single key, `ha-surge.lhns.de/enabled`, resolved
+    most-specific-wins: Deployment annotation → Namespace label → chart
+    `defaultEnabled` (default `false`). The webhook's `namespaceSelector` is
+    rendered from `defaultEnabled` so the apiserver gates scope before the
+    operator runs. Safety refusals (which only ever skip) for `strategy: Recreate`,
+    RWO/single-writer volumes, non-Deployment owners, already-multi-replica
+    workloads, and Services that select on `pod-template-hash`. See ADR 0009
+    (supersedes 0004).
+  - **Operator runs HA by default**: `replicaCount: 2` with a PodDisruptionBudget
+    and cross-node topology spread, because the operator is on the eviction path
+    and must stay available during drains. Both replicas serve admission; leader
+    election keeps the GC controller a singleton. The operator is stateless (all
+    in-flight state lives on pod labels/annotations in etcd), so failover mid-
+    eviction is safe. See ADR 0010.
   - **Helm chart** (`charts/ha-surge`) with cert-manager (default) or
     self-signed Helm-generated webhook serving certs, RBAC, leader election, and
     a pre-delete hook that clears leftover detached cover pods on uninstall.
   - **kustomize** manifests under `config/` for `make deploy` / release.yaml.
-  - Docs: README, getting-started, reference, limitations, and ADRs 0001–0008.
+  - Docs: README, getting-started, reference, limitations, and ADRs 0001–0010.
