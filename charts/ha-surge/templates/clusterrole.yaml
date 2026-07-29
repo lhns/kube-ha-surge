@@ -9,20 +9,26 @@ controller-gen doesn't emit. Keep the two in sync.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "kube-ha-surge.managerRoleName" . }}
+  name: {{ include "ha-surge.managerRoleName" . }}
   labels:
-    {{- include "kube-ha-surge.labels" . | nindent 4 }}
+    {{- include "ha-surge.labels" . | nindent 4 }}
 rules:
-  # Surge pods: the webhook clones a doomed pod into a stand-in and the
-  # controller garbage-collects it.
+  # Pods: the webhook detaches a doomed pod from its ReplicaSet (patch removes
+  # pod-template-hash) and the controller deletes the detached cover once the
+  # RS's own replacement is Ready.
   - apiGroups: [""]
     resources: [pods]
-    verbs: [get, list, watch, create, delete, patch]
+    verbs: [get, list, watch, patch, delete]
   # PVC access modes drive the RWO / single-writer safety refusal.
   - apiGroups: [""]
     resources: [persistentvolumeclaims]
     verbs: [get, list, watch]
-  # Events for surge lifecycle diagnostics.
+  # Services: guard against a Service that selects on pod-template-hash (which
+  # detaching would break) before acting.
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [get, list, watch]
+  # Events for detach lifecycle diagnostics.
   - apiGroups: [""]
     resources: [events]
     verbs: [create, patch]
@@ -30,10 +36,5 @@ rules:
   # pod's owning Deployment, detect the RS's own replacement becoming Ready).
   - apiGroups: [apps]
     resources: [deployments, replicasets]
-    verbs: [get, list, watch]
-  # EndpointSlices: confirm the surge pod is actually serving before allowing
-  # the eviction.
-  - apiGroups: [discovery.k8s.io]
-    resources: [endpointslices]
     verbs: [get, list, watch]
 {{- end }}

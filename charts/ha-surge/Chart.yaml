@@ -1,11 +1,11 @@
 apiVersion: v2
-name: kube-ha-surge
+name: ha-surge
 description: |
   Kubernetes operator that gives opted-in single-replica Deployments
   make-before-break HA during node drains. A ValidatingWebhook on the
-  pods/eviction subresource holds an eviction (HTTP 429) while a temporary
-  cloned "surge" pod comes up Ready, then allows it; a controller
-  garbage-collects the surge pods.
+  pods/eviction subresource detaches the doomed pod from its ReplicaSet and
+  holds the eviction (HTTP 429) until the RS's own replacement is Ready, then
+  allows it; a controller deletes the detached cover pod afterwards.
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

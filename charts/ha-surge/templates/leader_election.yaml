@@ -2,10 +2,10 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "kube-ha-surge.fullname" . }}-leader-election
+  name: {{ include "ha-surge.fullname" . }}-leader-election
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kube-ha-surge.labels" . | nindent 4 }}
+    {{- include "ha-surge.labels" . | nindent 4 }}
 rules:
   - apiGroups: [coordination.k8s.io]
     resources: [leases]
@@ -17,16 +17,16 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "kube-ha-surge.fullname" . }}-leader-election
+  name: {{ include "ha-surge.fullname" . }}-leader-election
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kube-ha-surge.labels" . | nindent 4 }}
+    {{- include "ha-surge.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "kube-ha-surge.fullname" . }}-leader-election
+  name: {{ include "ha-surge.fullname" . }}-leader-election
 subjects:
   - kind: ServiceAccount
-    name: {{ include "kube-ha-surge.serviceAccountName" . }}
+    name: {{ include "ha-surge.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 {{- end }}

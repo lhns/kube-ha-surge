@@ -43,7 +43,7 @@ Gate strictly on the **surge pod's real readiness**, never on a timer:
 - **A workload with no/meaningless readiness probe degrades to the timeout.** If
   a pod reports Ready instantly (no probe) it may be allowed before it truly
   serves — but that's the app's existing rollout behaviour too, not a regression
-  kube-ha-surge introduces. And if it never becomes Ready, `--max-surge-seconds`
+  ha-surge introduces. And if it never becomes Ready, `--max-surge-seconds`
   bounds the wait.
 - Requires the operator to watch/poll the surge pod's status across eviction
   retries — cheap (eviction QPS is tiny).

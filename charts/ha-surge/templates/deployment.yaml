@@ -1,25 +1,25 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "kube-ha-surge.fullname" . }}-controller
+  name: {{ include "ha-surge.fullname" . }}-controller
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kube-ha-surge.labels" . | nindent 4 }}
+    {{- include "ha-surge.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "kube-ha-surge.selectorLabels" . | nindent 6 }}
+      {{- include "ha-surge.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "kube-ha-surge.labels" . | nindent 8 }}
+        {{- include "ha-surge.labels" . | nindent 8 }}
       {{- with .Values.podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      serviceAccountName: {{ include "kube-ha-surge.serviceAccountName" . }}
+      serviceAccountName: {{ include "ha-surge.serviceAccountName" . }}
       {{- with .Values.image.pullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -31,7 +31,7 @@ spec:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: manager
-          image: {{ include "kube-ha-surge.image" . }}
+          image: {{ include "ha-surge.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             {{- if .Values.leaderElection.enabled }}
@@ -42,9 +42,6 @@ spec:
             - --metrics-bind-address=:8080
             - --webhook-port=9443
             - --webhook-cert-dir=/tmp/k8s-webhook-server/serving-certs
-            {{- with .Values.stripLabelPrefixes }}
-            - --strip-label-prefixes={{ join "," . }}
-            {{- end }}
           env:
             - name: POD_NAMESPACE
               valueFrom:
@@ -83,7 +80,7 @@ spec:
       volumes:
         - name: webhook-certs
           secret:
-            secretName: {{ include "kube-ha-surge.webhookCertSecretName" . }}
+            secretName: {{ include "ha-surge.webhookCertSecretName" . }}
             defaultMode: 0444
       {{- with .Values.nodeSelector }}
       nodeSelector:

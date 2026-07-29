@@ -6,7 +6,7 @@ Date: 2026-07-29
 
 ## Context
 
-kube-ha-surge is an admission webhook plus a garbage-collection controller. It
+ha-surge is an admission webhook plus a garbage-collection controller. It
 needs: an HTTPS webhook server with serving-cert handling, a typed Kubernetes
 client with caching informers (to read Deployments, ReplicaSets, Pods, PVCs,
 EndpointSlices cheaply), leader election, health/readiness probes, and metrics.

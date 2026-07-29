@@ -1,7 +1,9 @@
 // Package eviction implements the ValidatingWebhook on the pods/eviction
-// subresource. For an opted-in single-replica Deployment it holds the eviction
-// with a 429 (which drains retry on natively) while a stand-in surge pod comes
-// up, and allows the eviction only once the stand-in is Ready — make-before-break.
+// subresource. For an opted-in single-replica Deployment it detaches the doomed
+// pod from its ReplicaSet (so the RS makes a real replacement) and holds the
+// eviction with a 429 — which drains retry on natively — until that replacement
+// is Ready; the detached pod keeps serving in the meantime. Make-before-break,
+// no clone, no scaling.
 package eviction
 
 import (
@@ -11,7 +13,6 @@ import (
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -24,18 +25,14 @@ import (
 type Handler struct {
 	Client   client.Client
 	MaxSurge time.Duration
-	// StripLabelPrefixes are label-key prefixes dropped from the cloned surge
-	// pod (in addition to the ReplicaSet's pod-template-hash). Cluster-specific;
-	// see surge.BuildSurgePod.
-	StripLabelPrefixes []string
-	Log                logr.Logger
+	Log      logr.Logger
 	// now is overridable in tests.
 	now func() time.Time
 }
 
 // NewHandler builds a Handler with a real clock.
-func NewHandler(c client.Client, maxSurge time.Duration, stripLabelPrefixes []string, log logr.Logger) *Handler {
-	return &Handler{Client: c, MaxSurge: maxSurge, StripLabelPrefixes: stripLabelPrefixes, Log: log, now: time.Now}
+func NewHandler(c client.Client, maxSurge time.Duration, log logr.Logger) *Handler {
+	return &Handler{Client: c, MaxSurge: maxSurge, Log: log, now: time.Now}
 }
 
 // Handle is the admission entrypoint. Every branch that can't or needn't help
@@ -47,10 +44,27 @@ func (h *Handler) Handle(ctx context.Context, req admission.Request) admission.R
 	if err := h.Client.Get(ctx, types.NamespacedName{Namespace: req.Namespace, Name: req.Name}, pod); err != nil {
 		return admission.Allowed("pod not found")
 	}
-	if surge.IsSurgePod(pod) {
-		return admission.Allowed("surge pod")
+	log := h.Log.WithValues("pod", req.Name, "namespace", req.Namespace)
+
+	// Retry path: we already detached this pod. Allow once its ReplicaSet
+	// replacement is Ready, or once we've waited too long (fail-open).
+	if surge.IsDetached(pod) {
+		dep := h.getDeployment(ctx, pod.Namespace, pod.Labels[surge.LabelFor])
+		if dep == nil {
+			return admission.Allowed("target deployment gone")
+		}
+		if h.replacementReady(ctx, dep) {
+			log.Info("replacement ready, allowing eviction", "deployment", dep.Name)
+			return admission.Allowed("replacement replica ready")
+		}
+		if at, ok := surge.DetachedAt(pod); ok && h.now().Sub(at) > h.MaxSurge {
+			log.Info("detach timeout, failing open", "deployment", dep.Name)
+			return admission.Allowed("replacement did not become ready in time")
+		}
+		return deny429("ha-surge: replacement replica not ready yet")
 	}
 
+	// First eviction: decide whether we can and should cover it.
 	dep := h.ownerDeployment(ctx, pod)
 	if dep == nil {
 		return admission.Allowed("not Deployment-owned")
@@ -62,36 +76,78 @@ func (h *Handler) Handle(ctx context.Context, req admission.Request) admission.R
 		return admission.Allowed("already multi-replica")
 	}
 	if surge.HasReadWriteOnceVolume(pod, h.pvcAccessModes(ctx, pod)) {
-		return admission.Allowed("single-writer (RWO) volume; cannot surge")
+		return admission.Allowed("single-writer (RWO) volume; replacement can't co-mount it")
+	}
+	if h.serviceSelectsOnHash(ctx, pod) {
+		return admission.Allowed("a Service selects on pod-template-hash; cannot detach safely")
 	}
 
-	log := h.Log.WithValues("pod", req.Name, "namespace", req.Namespace, "deployment", dep.Name)
-
-	// Is there already a Ready stand-in? Then make-before-break is satisfied.
-	existing := h.findSurge(ctx, dep)
-	if existing != nil && surge.PodReady(existing) {
-		log.Info("surge ready, allowing eviction")
-		return admission.Allowed("surge replica ready")
+	// Detach: strip pod-template-hash so the RS makes a replacement, while the
+	// pod keeps its app labels and keeps serving. Hold the eviction until ready.
+	patch := client.MergeFrom(pod)
+	detached := surge.MarkDetached(pod, dep.Name, h.now())
+	if err := h.Client.Patch(ctx, detached, patch); err != nil {
+		log.Error(err, "failed to detach pod, failing open", "deployment", dep.Name)
+		return admission.Allowed("detach failed")
 	}
+	log.Info("detached pod from ReplicaSet, holding eviction", "deployment", dep.Name)
+	return deny429("ha-surge: bringing up a replacement replica")
+}
 
-	// No stand-in yet: create one and hold the eviction.
-	if existing == nil {
-		want := surge.BuildSurgePod(pod, dep, h.StripLabelPrefixes)
-		if err := h.Client.Create(ctx, want); err != nil && !apierrors.IsAlreadyExists(err) {
-			// Can't create the stand-in -> don't block the drain.
-			log.Error(err, "failed to create surge pod, failing open")
-			return admission.Allowed("surge creation failed")
+// replacementReady reports whether the ReplicaSet has produced a Ready pod to
+// take the detached pod's place. It counts Ready pods matching the Deployment's
+// selector that are NOT detached (excludes the cover) — robust against the brief
+// lag in dep.Status after the detach.
+func (h *Handler) replacementReady(ctx context.Context, dep *appsv1.Deployment) bool {
+	var pods corev1.PodList
+	if err := h.Client.List(ctx, &pods,
+		client.InNamespace(dep.Namespace),
+		client.MatchingLabels(surge.SelectorMatchLabels(dep)),
+	); err != nil {
+		return false
+	}
+	var ready int32
+	for i := range pods.Items {
+		p := &pods.Items[i]
+		if surge.IsDetached(p) || p.DeletionTimestamp != nil {
+			continue
 		}
-		log.Info("created surge pod, holding eviction")
-		return deny429("ha-surge: bringing up a stand-in replica")
+		if surge.PodReady(p) {
+			ready++
+		}
 	}
+	return ready >= surge.DesiredReplicas(dep)
+}
 
-	// Stand-in exists but isn't Ready yet. Fail open if it's taking too long.
-	if age := h.now().Sub(existing.CreationTimestamp.Time); age > h.MaxSurge {
-		log.Info("surge timeout, failing open", "age", age.String())
-		return admission.Allowed("surge did not become ready in time")
+// serviceSelectsOnHash reports whether any Service in the namespace that would
+// route to this pod selects on pod-template-hash — in which case removing that
+// label would drop the pod from the Service, so we must not detach.
+func (h *Handler) serviceSelectsOnHash(ctx context.Context, pod *corev1.Pod) bool {
+	var svcs corev1.ServiceList
+	if err := h.Client.List(ctx, &svcs, client.InNamespace(pod.Namespace)); err != nil {
+		return false
 	}
-	return deny429("ha-surge: stand-in replica not ready yet")
+	for i := range svcs.Items {
+		sel := svcs.Items[i].Spec.Selector
+		if len(sel) == 0 {
+			continue
+		}
+		if surge.SelectorUsesPodTemplateHash(sel) && surge.MatchesLabels(pod.Labels, sel) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Handler) getDeployment(ctx context.Context, ns, name string) *appsv1.Deployment {
+	if name == "" {
+		return nil
+	}
+	dep := &appsv1.Deployment{}
+	if err := h.Client.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, dep); err != nil {
+		return nil
+	}
+	return dep
 }
 
 // ownerDeployment walks pod -> ReplicaSet -> Deployment. Returns nil for any
@@ -109,23 +165,7 @@ func (h *Handler) ownerDeployment(ctx context.Context, pod *corev1.Pod) *appsv1.
 	if depRef == nil || depRef.Kind != "Deployment" {
 		return nil
 	}
-	dep := &appsv1.Deployment{}
-	if err := h.Client.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: depRef.Name}, dep); err != nil {
-		return nil
-	}
-	return dep
-}
-
-func (h *Handler) findSurge(ctx context.Context, dep *appsv1.Deployment) *corev1.Pod {
-	p := &corev1.Pod{}
-	err := h.Client.Get(ctx, types.NamespacedName{Namespace: dep.Namespace, Name: surge.SurgeName(dep.Name)}, p)
-	if err != nil {
-		return nil
-	}
-	if !surge.IsSurgePod(p) || p.Labels[surge.LabelFor] != dep.Name {
-		return nil
-	}
-	return p
+	return h.getDeployment(ctx, pod.Namespace, depRef.Name)
 }
 
 func (h *Handler) pvcAccessModes(ctx context.Context, pod *corev1.Pod) map[string][]corev1.PersistentVolumeAccessMode {
@@ -137,8 +177,7 @@ func (h *Handler) pvcAccessModes(ctx context.Context, pod *corev1.Pod) map[strin
 		name := v.PersistentVolumeClaim.ClaimName
 		pvc := &corev1.PersistentVolumeClaim{}
 		if err := h.Client.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: name}, pvc); err != nil {
-			// Unknown -> treat conservatively as single-writer so we don't try
-			// to co-mount something we can't see.
+			// Unknown -> treat conservatively as single-writer.
 			out[name] = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}
 			continue
 		}
@@ -159,7 +198,5 @@ func controllerRef(refs []metav1.OwnerReference) *metav1.OwnerReference {
 // deny429 denies the eviction with HTTP 429 TooManyRequests so the draining
 // client backs off and retries (the same signal a PodDisruptionBudget uses).
 func deny429(msg string) admission.Response {
-	return admission.Response{
-		AdmissionResponse: admissionResponseDenied(msg),
-	}
+	return admission.Response{AdmissionResponse: admissionResponseDenied(msg)}
 }

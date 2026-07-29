@@ -2,6 +2,7 @@ package surge
 
 import (
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -9,16 +10,6 @@ import (
 )
 
 func i32(i int32) *int32 { return &i }
-
-func TestIsSurgePod(t *testing.T) {
-	if IsSurgePod(&corev1.Pod{}) {
-		t.Fatal("empty pod should not be a surge pod")
-	}
-	p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{LabelSurge: "true"}}}
-	if !IsSurgePod(p) {
-		t.Fatal("labelled pod should be a surge pod")
-	}
-}
 
 func TestEnabled(t *testing.T) {
 	if Enabled(&appsv1.Deployment{}) {
@@ -34,22 +25,37 @@ func TestEnabled(t *testing.T) {
 	}
 }
 
-func TestAlreadyHA(t *testing.T) {
-	cases := []struct {
-		replicas *int32
-		want     bool
-	}{
-		{nil, false},
-		{i32(1), false},
-		{i32(2), true},
-		{i32(3), true},
-		{i32(0), false},
+func TestIsDetachedAndPodTemplateHash(t *testing.T) {
+	p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"pod-template-hash": "abc"}}}
+	if IsDetached(p) {
+		t.Error("plain pod is not detached")
 	}
-	for _, c := range cases {
-		d := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Replicas: c.replicas}}
-		if got := AlreadyHA(d); got != c.want {
-			t.Errorf("replicas=%v: got %v want %v", c.replicas, got, c.want)
+	if PodTemplateHash(p) != "abc" {
+		t.Error("hash accessor")
+	}
+	p.Labels[LabelDetached] = "true"
+	if !IsDetached(p) {
+		t.Error("marked pod is detached")
+	}
+}
+
+func TestAlreadyHA(t *testing.T) {
+	for _, c := range []struct {
+		r    *int32
+		want bool
+	}{{nil, false}, {i32(0), false}, {i32(1), false}, {i32(2), true}, {i32(5), true}} {
+		if got := AlreadyHA(&appsv1.Deployment{Spec: appsv1.DeploymentSpec{Replicas: c.r}}); got != c.want {
+			t.Errorf("replicas=%v got %v want %v", c.r, got, c.want)
 		}
+	}
+}
+
+func TestSelectorUsesPodTemplateHash(t *testing.T) {
+	if SelectorUsesPodTemplateHash(map[string]string{"app": "web"}) {
+		t.Error("app-only selector must not flag")
+	}
+	if !SelectorUsesPodTemplateHash(map[string]string{"app": "web", "pod-template-hash": "x"}) {
+		t.Error("hash selector must flag")
 	}
 }
 
@@ -58,9 +64,7 @@ func TestHasReadWriteOnceVolume(t *testing.T) {
 		p := &corev1.Pod{}
 		for _, c := range claims {
 			p.Spec.Volumes = append(p.Spec.Volumes, corev1.Volume{
-				VolumeSource: corev1.VolumeSource{
-					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: c},
-				},
+				VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: c}},
 			})
 		}
 		return p
@@ -71,127 +75,92 @@ func TestHasReadWriteOnceVolume(t *testing.T) {
 	rwop := []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOncePod}
 
 	if !HasReadWriteOnceVolume(podWith("a"), map[string][]corev1.PersistentVolumeAccessMode{"a": rwo}) {
-		t.Error("RWO should be single-writer")
+		t.Error("RWO is single-writer")
 	}
 	if !HasReadWriteOnceVolume(podWith("a"), map[string][]corev1.PersistentVolumeAccessMode{"a": rwop}) {
-		t.Error("ReadWriteOncePod should be single-writer")
+		t.Error("RWOncePod is single-writer")
 	}
 	if HasReadWriteOnceVolume(podWith("a"), map[string][]corev1.PersistentVolumeAccessMode{"a": rwx}) {
-		t.Error("RWX should be shareable")
+		t.Error("RWX shareable")
 	}
 	if HasReadWriteOnceVolume(podWith("a"), map[string][]corev1.PersistentVolumeAccessMode{"a": rom}) {
-		t.Error("ROM should be shareable")
+		t.Error("ROM shareable")
 	}
 	if HasReadWriteOnceVolume(podWith(), nil) {
-		t.Error("no volumes => not single-writer")
+		t.Error("no volumes")
 	}
-	// one shareable + one RWO => blocked (the RWO can't be co-mounted).
-	modes := map[string][]corev1.PersistentVolumeAccessMode{"a": rwx, "b": rwo}
-	if !HasReadWriteOnceVolume(podWith("a", "b"), modes) {
-		t.Error("any RWO volume should block")
-	}
-}
-
-func TestSurgeName(t *testing.T) {
-	if got := SurgeName("web"); got != "web-hasurge" {
-		t.Errorf("got %q", got)
-	}
-	long := ""
-	for i := 0; i < 80; i++ {
-		long += "x"
-	}
-	got := SurgeName(long)
-	if len(got) > 63 {
-		t.Errorf("name too long: %d", len(got))
-	}
-	if got[len(got)-8:] != "-hasurge" {
-		t.Errorf("suffix lost: %q", got)
-	}
-}
-
-func TestBuildSurgePod(t *testing.T) {
-	target := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "web-abc123-xyz",
-			Namespace: "shop",
-			Labels: map[string]string{
-				"app":                    "web",
-				"pod-template-hash":      "abc123",
-				"injected.example.com/x": "y",
-			},
-			Annotations: map[string]string{
-				"prometheus.io/scrape":                             "true",
-				"kubectl.kubernetes.io/last-applied-configuration": "{...}",
-			},
-		},
-		Spec: corev1.PodSpec{
-			NodeName:   "worker-02",
-			Containers: []corev1.Container{{Name: "web", Image: "nginx"}},
-		},
-	}
-	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "shop", UID: "dep-uid"}}
-
-	s := BuildSurgePod(target, dep, []string{"injected.example.com/"})
-
-	if s.Name != "web-hasurge" {
-		t.Errorf("name %q", s.Name)
-	}
-	if s.Namespace != "shop" {
-		t.Errorf("namespace %q", s.Namespace)
-	}
-	if _, ok := s.Labels["pod-template-hash"]; ok {
-		t.Error("pod-template-hash must be stripped so the RS ignores the surge pod")
-	}
-	if _, ok := s.Labels["injected.example.com/x"]; ok {
-		t.Error("labels matching a configured strip prefix must be dropped")
-	}
-	if s.Labels["app"] != "web" {
-		t.Error("app label must be kept so the Service routes to it")
-	}
-	if s.Labels[LabelSurge] != "true" || s.Labels[LabelFor] != "web" {
-		t.Error("surge marker labels missing")
-	}
-	if s.Annotations[AnnotationReplacing] != "web-abc123-xyz" {
-		t.Errorf("replacing annotation = %q", s.Annotations[AnnotationReplacing])
-	}
-	if s.Annotations["prometheus.io/scrape"] != "true" {
-		t.Error("user annotations should be preserved")
-	}
-	if _, ok := s.Annotations["kubectl.kubernetes.io/last-applied-configuration"]; ok {
-		t.Error("last-applied-configuration should be dropped")
-	}
-	if s.Spec.NodeName != "" {
-		t.Error("nodeName must be cleared so the scheduler can place it on a healthy node")
-	}
-	if len(s.Spec.Containers) != 1 || s.Spec.Containers[0].Image != "nginx" {
-		t.Error("spec should be cloned")
-	}
-	if len(s.OwnerReferences) != 1 {
-		t.Fatalf("want 1 owner ref, got %d", len(s.OwnerReferences))
-	}
-	ref := s.OwnerReferences[0]
-	if ref.Kind != "Deployment" || ref.Name != "web" || ref.UID != "dep-uid" {
-		t.Errorf("owner ref wrong: %+v", ref)
-	}
-	if ref.Controller == nil || !*ref.Controller {
-		t.Error("owner ref must be controller=true so the ReplicaSet won't adopt/count it")
+	if !HasReadWriteOnceVolume(podWith("a", "b"), map[string][]corev1.PersistentVolumeAccessMode{"a": rwx, "b": rwo}) {
+		t.Error("any RWO blocks")
 	}
 }
 
 func TestPodReady(t *testing.T) {
-	notReady := &corev1.Pod{Status: corev1.PodStatus{Conditions: []corev1.PodCondition{
-		{Type: corev1.PodReady, Status: corev1.ConditionFalse},
-	}}}
-	ready := &corev1.Pod{Status: corev1.PodStatus{Conditions: []corev1.PodCondition{
-		{Type: corev1.PodReady, Status: corev1.ConditionTrue},
-	}}}
-	if PodReady(notReady) {
-		t.Error("false condition => not ready")
+	ready := &corev1.Pod{Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}}
+	notReady := &corev1.Pod{Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionFalse}}}}
+	if !PodReady(ready) || PodReady(notReady) || PodReady(&corev1.Pod{}) {
+		t.Error("PodReady wrong")
 	}
-	if !PodReady(ready) {
-		t.Error("true condition => ready")
+}
+
+func TestMarkDetached(t *testing.T) {
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	in := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "web-abc-xyz",
+			Namespace: "shop",
+			Labels: map[string]string{
+				"app":                          "web",
+				"pod-template-hash":            "abc",
+				"kube-vnet.system/net.cluster": "egress", // an operator-injected label we must NOT touch
+			},
+			Annotations: map[string]string{"prometheus.io/scrape": "true"},
+		},
 	}
-	if PodReady(&corev1.Pod{}) {
-		t.Error("no condition => not ready")
+	out := MarkDetached(in, "web", now)
+
+	// input untouched
+	if _, ok := in.Labels["pod-template-hash"]; !ok {
+		t.Error("input pod must not be mutated")
+	}
+	if _, ok := out.Labels["pod-template-hash"]; ok {
+		t.Error("pod-template-hash must be removed (detaches from the ReplicaSet)")
+	}
+	if out.Labels["app"] != "web" {
+		t.Error("app label must be kept (Service keeps routing)")
+	}
+	if out.Labels["kube-vnet.system/net.cluster"] != "egress" {
+		t.Error("other injected labels must be left alone (network identity preserved)")
+	}
+	if out.Labels[LabelDetached] != "true" || out.Labels[LabelFor] != "web" {
+		t.Error("detach marker labels missing")
+	}
+	if out.Annotations["prometheus.io/scrape"] != "true" {
+		t.Error("user annotations preserved")
+	}
+	at, ok := DetachedAt(out)
+	if !ok || !at.Equal(now) {
+		t.Errorf("detached-at not round-tripped: %v %v", at, ok)
+	}
+}
+
+func TestDesiredReplicasAndSelector(t *testing.T) {
+	if DesiredReplicas(&appsv1.Deployment{}) != 1 {
+		t.Error("default desired = 1")
+	}
+	d := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{
+		Replicas: i32(3),
+		Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "web"}},
+	}}
+	if DesiredReplicas(d) != 3 {
+		t.Error("desired from spec")
+	}
+	if SelectorMatchLabels(d)["app"] != "web" {
+		t.Error("selector labels")
+	}
+	if !MatchesLabels(map[string]string{"app": "web", "x": "y"}, map[string]string{"app": "web"}) {
+		t.Error("superset matches")
+	}
+	if MatchesLabels(map[string]string{"app": "db"}, map[string]string{"app": "web"}) {
+		t.Error("mismatch")
 	}
 }

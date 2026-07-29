@@ -1,6 +1,6 @@
 # 0002 — Surge via a cloned Pod owned by the target Deployment
 
-Status: Accepted
+Status: Superseded by [0008](0008-detach-doomed-pod.md)
 
 Date: 2026-07-29
 

@@ -6,7 +6,7 @@ Date: 2026-07-29
 
 ## Context
 
-kube-ha-surge needs to notice, *synchronously and before it's too late*, that a
+ha-surge needs to notice, *synchronously and before it's too late*, that a
 single-replica pod is about to be removed by a graceful disruption (node drain,
 cordon + evict, autoscaler consolidation, node upgrade), so it can bring up a
 stand-in first. "Before it's too late" is the hard part: by the time the pod is

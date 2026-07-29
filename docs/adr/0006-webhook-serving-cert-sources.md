@@ -27,18 +27,18 @@ Support **two cert sources**, selected by `webhook.certSource` in the chart:
 
 ### `cert-manager` (default)
 
-Render a selfSigned `Issuer` (`kube-ha-surge-selfsigned`) and a `Certificate`
-(`kube-ha-surge-webhook`, secret `kube-ha-surge-webhook-tls`, dnsNames
-`kube-ha-surge-webhook.kube-ha-surge-system.svc` and `.svc.cluster.local`).
+Render a selfSigned `Issuer` (`ha-surge-selfsigned`) and a `Certificate`
+(`ha-surge-webhook`, secret `ha-surge-webhook-tls`, dnsNames
+`ha-surge-webhook.ha-surge-system.svc` and `.svc.cluster.local`).
 Annotate the webhook config with
-`cert-manager.io/inject-ca-from: kube-ha-surge-system/kube-ha-surge-webhook` and
+`cert-manager.io/inject-ca-from: ha-surge-system/ha-surge-webhook` and
 leave `caBundle` empty — cert-manager's **cainjector** fills it. cert-manager
 owns rotation.
 
 ### `helm` (dependency-free fallback)
 
 Generate a self-signed CA + serving cert with Helm's **`genCA`/`genSignedCert`**
-at template time, store it in the `kube-ha-surge-webhook-tls` Secret, and inject
+at template time, store it in the `ha-surge-webhook-tls` Secret, and inject
 the CA into the webhook config's `caBundle` (base64) directly. On `helm upgrade`
 the existing Secret is **reused via `lookup`** so the cert does not rotate every
 reconcile — regeneration happens only if the Secret is missing.

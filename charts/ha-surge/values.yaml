@@ -1,16 +1,16 @@
-# Default values for kube-ha-surge.
+# Default values for ha-surge.
 
 # Override the generated resource names. nameOverride replaces the chart name in
 # `<release>-<name>`; fullnameOverride replaces the whole base name. The chart's
 # fixed contract names (the webhook Service, the serving-cert Secret, the
 # ValidatingWebhookConfiguration, etc.) are all derived from the fullname base,
-# so keep the release named `kube-ha-surge` (or set fullnameOverride:
-# kube-ha-surge) to get the canonical names the docs reference.
+# so keep the release named `ha-surge` (or set fullnameOverride:
+# ha-surge) to get the canonical names the docs reference.
 nameOverride: ""
 fullnameOverride: ""
 
 image:
-  repository: ghcr.io/lhns/kube-ha-surge
+  repository: ghcr.io/lhns/ha-surge
   # tag overrides Chart.appVersion when set.
   tag: ""
   pullPolicy: IfNotPresent
@@ -22,19 +22,10 @@ image:
 replicaCount: 1
 
 # Maximum time (seconds) the eviction webhook holds an eviction waiting for the
-# surge pod to become Ready before it fails open and allows the eviction. This
-# is the fail-safe bound: a stuck surge never wedges a drain longer than this.
-# Wired to the manager's --max-surge-seconds flag.
+# ReplicaSet's replacement to become Ready before it fails open and allows the
+# eviction. This is the fail-safe bound: a stuck replacement never wedges a
+# drain longer than this. Wired to the manager's --max-surge-seconds flag.
 maxSurgeSeconds: 120
-
-# Label-key prefixes to drop from the cloned surge pod (the ReplicaSet's
-# pod-template-hash is always stripped). Use this for labels a controller injects
-# onto pods at runtime and re-derives on new pods — some clusters guard such
-# labels with admission policies that would reject a user-supplied value and
-# block the clone's creation. Cluster-specific; empty by default. Wired to the
-# manager's --strip-label-prefixes flag.
-#   stripLabelPrefixes: ["some-operator.example.com/"]
-stripLabelPrefixes: []
 
 serviceAccount:
   # create the operator ServiceAccount. When false, you must provide one and
@@ -124,10 +115,10 @@ commonLabels: {}
 # Termination grace period for the operator Pod.
 terminationGracePeriodSeconds: 10
 
-# Helm pre-delete hook. On `helm uninstall` it deletes leftover surge pods
-# cluster-wide (`kubectl delete pods -A -l ha-surge.lhns.de/surge=true`) so no
-# stand-in pods are orphaned once the controller that garbage-collects them is
-# gone. Best-effort and designed to NEVER block the uninstall: the container
+# Helm pre-delete hook. On `helm uninstall` it deletes leftover detached cover
+# pods cluster-wide (`kubectl delete pods -A -l ha-surge.lhns.de/detached=true`)
+# so no cover pods are orphaned once the controller that garbage-collects them
+# is gone. Best-effort and designed to NEVER block the uninstall: the container
 # always exits 0. See ADR 0004 / the pre-delete-hook template.
 cleanup:
   enabled: true

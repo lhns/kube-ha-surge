@@ -1,8 +1,8 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: kube-ha-surge-leader-election
-  namespace: kube-ha-surge-system
+  name: ha-surge-leader-election
+  namespace: ha-surge-system
 rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]

@@ -1,7 +1,7 @@
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
-  name: kube-ha-surge
+  name: ha-surge
 webhooks:
   - name: eviction.ha-surge.lhns.de
     admissionReviewVersions: [v1]
@@ -21,8 +21,8 @@ webhooks:
         scope: Namespaced
     clientConfig:
       service:
-        name: kube-ha-surge-webhook
-        namespace: kube-ha-surge-system
+        name: ha-surge-webhook
+        namespace: ha-surge-system
         path: /validate-eviction
         port: 443
       # Placeholder caBundle for the non-Helm (`make deploy`) path. Helm's

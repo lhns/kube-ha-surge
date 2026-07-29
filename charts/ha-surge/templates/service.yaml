@@ -1,10 +1,10 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "kube-ha-surge.webhookServiceName" . }}
+  name: {{ include "ha-surge.webhookServiceName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kube-ha-surge.labels" . | nindent 4 }}
+    {{- include "ha-surge.labels" . | nindent 4 }}
 spec:
   type: ClusterIP
   ports:
@@ -13,4 +13,4 @@ spec:
       targetPort: 9443
       protocol: TCP
   selector:
-    {{- include "kube-ha-surge.selectorLabels" . | nindent 4 }}
+    {{- include "ha-surge.selectorLabels" . | nindent 4 }}

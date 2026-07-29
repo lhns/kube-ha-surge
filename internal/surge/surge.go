@@ -1,85 +1,87 @@
-// Package surge holds the pure, side-effect-free building blocks of
-// kube-ha-surge: the label/annotation contract, the decision helpers used by
-// the eviction webhook, and the clone that turns a doomed pod into a temporary
-// stand-in ("surge") pod. Keeping these free of a Kubernetes client makes them
-// trivial to unit-test.
+// Package surge holds the pure, side-effect-free building blocks of ha-surge:
+// the label/annotation contract, the eviction-webhook decision helpers, and the
+// "detach" transformation that removes a doomed pod from its ReplicaSet so the
+// RS makes a real replacement while the doomed pod keeps serving. Keeping these
+// free of a Kubernetes client makes them trivial to unit-test.
 package surge
 
 import (
-	"strings"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/rand"
 )
 
 const (
-	// AnnotationEnabled on a Deployment opts its pods into make-before-break
-	// surging. Absent/"false" => the webhook passes evictions straight through.
+	// AnnotationEnabled on a Deployment opts its pods into make-before-break.
+	// Absent/"false" => the webhook passes evictions straight through.
 	AnnotationEnabled = "ha-surge.lhns.de/enabled"
 
-	// LabelSurge marks a pod created by this operator as a temporary stand-in.
-	LabelSurge = "ha-surge.lhns.de/surge"
-
-	// LabelFor records which Deployment a surge pod is standing in for.
-	LabelFor = "ha-surge.lhns.de/for"
-
-	// AnnotationReplacing records the doomed pod a surge pod is covering for, so
-	// the controller only cleans the stand-in up once that pod is actually gone
-	// (evicted) and the ReplicaSet's own replacement is Ready.
-	AnnotationReplacing = "ha-surge.lhns.de/replacing"
-
-	// NamespaceLabelManaged gates the webhook's namespaceSelector; only
-	// evictions in namespaces carrying it reach the operator (blast-radius
-	// limit). Enforced in the ValidatingWebhookConfiguration, not in code.
+	// NamespaceLabelManaged gates the webhook's namespaceSelector; only evictions
+	// in namespaces carrying it reach the operator (blast-radius limit). Enforced
+	// in the ValidatingWebhookConfiguration, not in code.
 	NamespaceLabelManaged = "ha-surge.lhns.de/managed"
 
-	// podTemplateHashLabel is injected by the ReplicaSet; a surge pod must NOT
-	// carry it, otherwise it would match the RS selector. Stripping it means the
-	// RS ignores the surge pod entirely while the Service (which selects on app
-	// labels, not the hash) still routes to it.
-	podTemplateHashLabel = "pod-template-hash"
+	// PodTemplateHashLabel is injected by the Deployment/ReplicaSet and is part of
+	// the RS selector but NOT the Service selector. Removing it from a pod detaches
+	// it from the RS (which then makes a replacement) while the pod keeps matching
+	// the Service (so it keeps serving). This asymmetry is the whole mechanism.
+	PodTemplateHashLabel = "pod-template-hash"
+
+	// LabelDetached marks a pod this operator has detached from its ReplicaSet to
+	// cover an in-flight eviction. It is the operator's entire record of state.
+	LabelDetached = "ha-surge.lhns.de/detached"
+
+	// LabelFor records the Deployment a detached pod belongs to (the RS ownerRef
+	// is gone once detached, so we remember it here).
+	LabelFor = "ha-surge.lhns.de/for"
+
+	// AnnotationDetachedAt records when the pod was detached (RFC3339), for the
+	// fail-open timeout.
+	AnnotationDetachedAt = "ha-surge.lhns.de/detached-at"
 )
-
-// hasAnyPrefix reports whether key starts with any of the given prefixes.
-func hasAnyPrefix(key string, prefixes []string) bool {
-	for _, p := range prefixes {
-		if p != "" && strings.HasPrefix(key, p) {
-			return true
-		}
-	}
-	return false
-}
-
-// IsSurgePod reports whether a pod is one of our stand-ins.
-func IsSurgePod(pod *corev1.Pod) bool {
-	return pod.Labels[LabelSurge] == "true"
-}
 
 // Enabled reports whether a Deployment has opted in.
 func Enabled(dep *appsv1.Deployment) bool {
 	return dep.Annotations[AnnotationEnabled] == "true"
 }
 
+// IsDetached reports whether this operator has detached the pod.
+func IsDetached(pod *corev1.Pod) bool {
+	return pod.Labels[LabelDetached] == "true"
+}
+
+// PodTemplateHash returns the pod's pod-template-hash label value (may be empty).
+func PodTemplateHash(pod *corev1.Pod) string {
+	return pod.Labels[PodTemplateHashLabel]
+}
+
 // AlreadyHA reports whether the Deployment already runs (intends to run) more
 // than one replica, in which case normal replicas + PDB handle disruptions and
-// surging is unnecessary.
+// there's nothing for us to do.
 func AlreadyHA(dep *appsv1.Deployment) bool {
 	return dep.Spec.Replicas != nil && *dep.Spec.Replicas >= 2
 }
 
-// HasReadWriteOnceVolume reports whether the pod mounts any RWO PVC. A stand-in
-// can't co-mount a single-writer volume (Multi-Attach), so such workloads can't
-// be helped and must be passed through. Only inline PVC access modes are
-// visible here; the webhook resolves referenced PVCs and merges the result.
+// SelectorUsesPodTemplateHash reports whether a selector keys on the
+// pod-template-hash label. If a Service selected on it, removing the label from
+// the pod would drop it out of that Service — so we must not detach. (Standard
+// Deployments never do this; Services select on app labels.)
+func SelectorUsesPodTemplateHash(selector map[string]string) bool {
+	_, ok := selector[PodTemplateHashLabel]
+	return ok
+}
+
+// HasReadWriteOnceVolume reports whether the pod mounts any RWO PVC. The RS's
+// replacement can't co-mount a single-writer volume (Multi-Attach) while the
+// detached pod still holds it, so such workloads can't be helped and are passed
+// through. The webhook resolves referenced PVCs and passes their access modes.
 func HasReadWriteOnceVolume(pod *corev1.Pod, pvcAccessModes map[string][]corev1.PersistentVolumeAccessMode) bool {
 	for _, v := range pod.Spec.Volumes {
 		if v.PersistentVolumeClaim == nil {
 			continue
 		}
-		modes := pvcAccessModes[v.PersistentVolumeClaim.ClaimName]
-		if isSingleWriter(modes) {
+		if isSingleWriter(pvcAccessModes[v.PersistentVolumeClaim.ClaimName]) {
 			return true
 		}
 	}
@@ -87,15 +89,10 @@ func HasReadWriteOnceVolume(pod *corev1.Pod, pvcAccessModes map[string][]corev1.
 }
 
 func isSingleWriter(modes []corev1.PersistentVolumeAccessMode) bool {
-	hasShared := false
 	for _, m := range modes {
 		if m == corev1.ReadWriteMany || m == corev1.ReadOnlyMany {
-			hasShared = true
+			return false // shareable
 		}
-	}
-	// RWO (or ReadWriteOncePod) with no shared mode => single writer.
-	if hasShared {
-		return false
 	}
 	for _, m := range modes {
 		if m == corev1.ReadWriteOnce || m == corev1.ReadWriteOncePod {
@@ -115,93 +112,62 @@ func PodReady(pod *corev1.Pod) bool {
 	return false
 }
 
-// SurgeName is the deterministic name of the stand-in for a Deployment. A fixed
-// name makes creation idempotent (a second attempt collides with AlreadyExists)
-// and guarantees at most one stand-in per target.
-func SurgeName(deployment string) string {
-	const suffix = "-hasurge"
-	max := 63 - len(suffix)
-	if len(deployment) > max {
-		deployment = deployment[:max]
+// MarkDetached returns a deep copy of pod transformed into a detached cover:
+// the pod-template-hash label is removed (detaching it from the ReplicaSet, which
+// will create a replacement), and our marker labels/annotation are added. Every
+// other label — the app labels the Service selects on, and any operator-injected
+// labels like network-membership labels — is left untouched, so serving and
+// network identity are preserved. The input pod is not modified.
+func MarkDetached(pod *corev1.Pod, deployment string, now time.Time) *corev1.Pod {
+	out := pod.DeepCopy()
+	if out.Labels == nil {
+		out.Labels = map[string]string{}
 	}
-	return deployment + suffix
-}
-
-// BuildSurgePod clones a doomed pod into a stand-in for its Deployment: same
-// spec and app labels (so the Service routes to it) but stripped of node
-// pinning and the ReplicaSet's pod-template-hash, marked as a surge pod, and
-// owned (controller=true) by the target Deployment so the ReplicaSet ignores it
-// and it is garbage-collected with the Deployment.
-//
-// stripLabelPrefixes drops any inherited label whose key starts with one of the
-// given prefixes. Use it for labels a controller injects onto pods at runtime
-// and re-derives on new pods — some clusters guard such labels with admission
-// policies that reject a user-supplied value, which would block the clone's
-// creation. The prefix set is cluster-specific and supplied by the operator's
-// deployment; the code itself carries no assumptions about them.
-func BuildSurgePod(target *corev1.Pod, dep *appsv1.Deployment, stripLabelPrefixes []string) *corev1.Pod {
-	labels := map[string]string{}
-	for k, v := range target.Labels {
-		if k == podTemplateHashLabel || hasAnyPrefix(k, stripLabelPrefixes) {
-			continue
-		}
-		labels[k] = v
+	delete(out.Labels, PodTemplateHashLabel)
+	out.Labels[LabelDetached] = "true"
+	out.Labels[LabelFor] = deployment
+	if out.Annotations == nil {
+		out.Annotations = map[string]string{}
 	}
-	labels[LabelSurge] = "true"
-	labels[LabelFor] = dep.Name
-
-	spec := *target.Spec.DeepCopy()
-	// Let the scheduler place the stand-in on a healthy node (the target's node
-	// is being drained/cordoned).
-	spec.NodeName = ""
-	spec.Hostname = ""
-
-	annotations := cloneAnnotations(target.Annotations)
-	if annotations == nil {
-		annotations = map[string]string{}
-	}
-	annotations[AnnotationReplacing] = target.Name
-
-	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        SurgeName(dep.Name),
-			Namespace:   target.Namespace,
-			Labels:      labels,
-			Annotations: annotations,
-			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion:         "apps/v1",
-				Kind:               "Deployment",
-				Name:               dep.Name,
-				UID:                dep.UID,
-				Controller:         ptrBool(true),
-				BlockOwnerDeletion: ptrBool(false),
-			}},
-		},
-		Spec: spec,
-	}
-}
-
-// cloneAnnotations copies user annotations but drops ones that must not be
-// carried onto a brand-new pod.
-func cloneAnnotations(in map[string]string) map[string]string {
-	if in == nil {
-		return nil
-	}
-	out := make(map[string]string, len(in))
-	for k, v := range in {
-		switch k {
-		case "kubectl.kubernetes.io/last-applied-configuration",
-			"cni.projectcalico.org/podIP",
-			"cni.projectcalico.org/podIPs":
-			continue
-		}
-		out[k] = v
-	}
+	out.Annotations[AnnotationDetachedAt] = now.UTC().Format(time.RFC3339)
 	return out
 }
 
-func ptrBool(b bool) *bool { return &b }
+// DetachedAt parses the detach timestamp; ok is false if absent/unparseable.
+func DetachedAt(pod *corev1.Pod) (t time.Time, ok bool) {
+	v := pod.Annotations[AnnotationDetachedAt]
+	if v == "" {
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed, true
+}
 
-// RandSuffix is exposed for callers that want a unique name variant; unused by
-// the deterministic SurgeName path but handy in tests.
-func RandSuffix() string { return rand.String(5) }
+// DesiredReplicas returns the Deployment's desired replica count (default 1).
+func DesiredReplicas(dep *appsv1.Deployment) int32 {
+	if dep.Spec.Replicas != nil {
+		return *dep.Spec.Replicas
+	}
+	return 1
+}
+
+// SelectorMatchLabels returns the Deployment's selector match labels (nil-safe).
+func SelectorMatchLabels(dep *appsv1.Deployment) map[string]string {
+	if dep.Spec.Selector == nil {
+		return nil
+	}
+	return dep.Spec.Selector.MatchLabels
+}
+
+// MatchesLabels reports whether labels contains all of want.
+func MatchesLabels(labels, want map[string]string) bool {
+	for k, v := range want {
+		if labels[k] != v {
+			return false
+		}
+	}
+	return true
+}

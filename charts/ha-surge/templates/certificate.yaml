@@ -15,37 +15,37 @@ Webhook serving certificate. Two sources, selected by .Values.webhook.certSource
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
-  name: {{ include "kube-ha-surge.fullname" . }}-selfsigned
+  name: {{ include "ha-surge.fullname" . }}-selfsigned
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kube-ha-surge.labels" . | nindent 4 }}
+    {{- include "ha-surge.labels" . | nindent 4 }}
 spec:
   selfSigned: {}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ include "kube-ha-surge.webhookCertificateName" . }}
+  name: {{ include "ha-surge.webhookCertificateName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kube-ha-surge.labels" . | nindent 4 }}
+    {{- include "ha-surge.labels" . | nindent 4 }}
 spec:
-  secretName: {{ include "kube-ha-surge.webhookCertSecretName" . }}
+  secretName: {{ include "ha-surge.webhookCertSecretName" . }}
   dnsNames:
-    - {{ include "kube-ha-surge.webhookServiceName" . }}.{{ .Release.Namespace }}.svc
-    - {{ include "kube-ha-surge.webhookServiceName" . }}.{{ .Release.Namespace }}.svc.cluster.local
+    - {{ include "ha-surge.webhookServiceName" . }}.{{ .Release.Namespace }}.svc
+    - {{ include "ha-surge.webhookServiceName" . }}.{{ .Release.Namespace }}.svc.cluster.local
   issuerRef:
-    name: {{ include "kube-ha-surge.fullname" . }}-selfsigned
+    name: {{ include "ha-surge.fullname" . }}-selfsigned
     kind: Issuer
 {{- else if eq .Values.webhook.certSource "helm" }}
-{{- include "kube-ha-surge.ensureWebhookCerts" . -}}
+{{- include "ha-surge.ensureWebhookCerts" . -}}
 apiVersion: v1
 kind: Secret
 metadata:
-  name: {{ include "kube-ha-surge.webhookCertSecretName" . }}
+  name: {{ include "ha-surge.webhookCertSecretName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kube-ha-surge.labels" . | nindent 4 }}
+    {{- include "ha-surge.labels" . | nindent 4 }}
 type: kubernetes.io/tls
 data:
   tls.crt: {{ .Values._webhookCerts.crt }}

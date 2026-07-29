@@ -6,7 +6,7 @@ Date: 2026-07-29
 
 ## Context
 
-kube-ha-surge intercepts a cluster-critical path: `pods/eviction`, the API that
+ha-surge intercepts a cluster-critical path: `pods/eviction`, the API that
 node drains depend on. A component sitting there carries real blast-radius risk.
 It must never:
 

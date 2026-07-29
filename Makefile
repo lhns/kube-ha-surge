@@ -1,5 +1,5 @@
 # Image and tooling
-IMG ?= ghcr.io/lhns/kube-ha-surge:latest
+IMG ?= ghcr.io/lhns/ha-surge:latest
 CONTROLLER_GEN ?= $(shell go env GOPATH)/bin/controller-gen
 CONTROLLER_GEN_VERSION ?= v0.16.5
 ENVTEST ?= $(shell go env GOPATH)/bin/setup-envtest
@@ -62,7 +62,7 @@ controller-gen:
 
 .PHONY: manifests
 manifests: controller-gen ## Generate the RBAC ClusterRole from //+kubebuilder:rbac markers.
-	$(CONTROLLER_GEN) rbac:roleName=kube-ha-surge-manager paths="./internal/..." output:rbac:dir=config/rbac
+	$(CONTROLLER_GEN) rbac:roleName=ha-surge-manager paths="./internal/..." output:rbac:dir=config/rbac
 
 ##@ Docker
 

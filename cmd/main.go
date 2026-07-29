@@ -1,13 +1,13 @@
-// Command kube-ha-surge runs the operator: a ValidatingWebhook on pods/eviction
-// that gives opted-in single-replica Deployments make-before-break HA during
-// node drains, plus a controller that garbage-collects the stand-in pods.
+// Command ha-surge runs the operator: a ValidatingWebhook on pods/eviction that
+// gives opted-in single-replica Deployments make-before-break HA during node
+// drains by detaching the doomed pod from its ReplicaSet, plus a controller that
+// garbage-collects the detached cover pods.
 package main
 
 import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -32,14 +32,13 @@ var (
 
 func main() {
 	var (
-		metricsAddr   string
-		probeAddr     string
-		leaderElect   bool
-		maxSurgeSecs  int
-		certDir       string
-		webhookPort   int
-		stripPrefixes string
-		showVersion   bool
+		metricsAddr  string
+		probeAddr    string
+		leaderElect  bool
+		maxSurgeSecs int
+		certDir      string
+		webhookPort  int
+		showVersion  bool
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "address the metric endpoint binds to")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "address the health probe binds to")
@@ -47,20 +46,19 @@ func main() {
 	flag.IntVar(&maxSurgeSecs, "max-surge-seconds", 120, "max time to hold an eviction waiting for a stand-in before failing open")
 	flag.StringVar(&certDir, "webhook-cert-dir", "/tmp/k8s-webhook-server/serving-certs", "directory holding the webhook serving cert (tls.crt/tls.key)")
 	flag.IntVar(&webhookPort, "webhook-port", 9443, "port the webhook server binds to")
-	flag.StringVar(&stripPrefixes, "strip-label-prefixes", "", "comma-separated label-key prefixes to drop from the cloned surge pod (for labels a controller injects at runtime and re-derives; some clusters guard such labels with admission policies)")
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
 	if showVersion {
-		fmt.Printf("kube-ha-surge %s (commit %s, built %s)\n", version, commit, date)
+		fmt.Printf("ha-surge %s (commit %s, built %s)\n", version, commit, date)
 		return
 	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 	log := ctrl.Log.WithName("setup")
-	log.Info("starting kube-ha-surge", "version", version, "commit", commit, "date", date)
+	log.Info("starting ha-surge", "version", version, "commit", commit, "date", date)
 
 	scheme := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
@@ -73,7 +71,7 @@ func main() {
 		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         leaderElect,
-		LeaderElectionID:       "kube-ha-surge.lhns.de",
+		LeaderElectionID:       "ha-surge.lhns.de",
 		WebhookServer: webhook.NewServer(webhook.Options{
 			Port:    webhookPort,
 			CertDir: certDir,
@@ -95,20 +93,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	var stripLabelPrefixes []string
-	for _, p := range strings.Split(stripPrefixes, ",") {
-		if p = strings.TrimSpace(p); p != "" {
-			stripLabelPrefixes = append(stripLabelPrefixes, p)
-		}
-	}
-
 	mgr.GetWebhookServer().Register("/validate-eviction", &webhook.Admission{
-		Handler: eviction.NewHandler(directClient, maxSurge, stripLabelPrefixes, ctrl.Log.WithName("webhook")),
+		Handler: eviction.NewHandler(directClient, maxSurge, ctrl.Log.WithName("webhook")),
 	})
 
-	if err := controller.NewSurgeReconciler(mgr.GetClient(), maxSurge, ctrl.Log.WithName("controller")).
+	if err := controller.NewDetachReconciler(mgr.GetClient(), ctrl.Log.WithName("controller")).
 		SetupWithManager(mgr); err != nil {
-		log.Error(err, "unable to set up surge controller")
+		log.Error(err, "unable to set up detach controller")
 		os.Exit(1)
 	}
 

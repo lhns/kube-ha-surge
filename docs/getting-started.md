@@ -1,6 +1,6 @@
 # Getting started
 
-This walks through installing kube-ha-surge, opting a workload in, and watching
+This walks through installing ha-surge, opting a workload in, and watching
 make-before-break work during a node drain.
 
 ## Prerequisites
@@ -16,19 +16,19 @@ make-before-break work during a node drain.
 ### With cert-manager (default)
 
 ```sh
-helm install kube-ha-surge oci://ghcr.io/lhns/charts/kube-ha-surge \
-  -n kube-ha-surge-system --create-namespace
+helm install ha-surge oci://ghcr.io/lhns/charts/ha-surge \
+  -n ha-surge-system --create-namespace
 ```
 
 The chart renders a selfSigned `Issuer` + `Certificate`; cert-manager mints the
-serving cert (Secret `kube-ha-surge-webhook-tls`) and its cainjector fills the
+serving cert (Secret `ha-surge-webhook-tls`) and its cainjector fills the
 webhook's `caBundle`.
 
 ### Without cert-manager (self-signed via Helm)
 
 ```sh
-helm install kube-ha-surge oci://ghcr.io/lhns/charts/kube-ha-surge \
-  -n kube-ha-surge-system --create-namespace \
+helm install ha-surge oci://ghcr.io/lhns/charts/ha-surge \
+  -n ha-surge-system --create-namespace \
   --set webhook.certSource=helm
 ```
 
@@ -40,8 +40,8 @@ webhook config's `caBundle`. The cert is reused across `helm upgrade` (via
 ### Verify
 
 ```sh
-kubectl -n kube-ha-surge-system get deploy kube-ha-surge-controller
-kubectl get validatingwebhookconfiguration kube-ha-surge
+kubectl -n ha-surge-system get deploy ha-surge-controller
+kubectl get validatingwebhookconfiguration ha-surge
 ```
 
 The Deployment should be `Available` and the webhook registered.
@@ -49,7 +49,7 @@ The Deployment should be `Available` and the webhook registered.
 ## 2. Opt in a namespace
 
 The webhook only sees evictions in namespaces you enroll. This is the
-blast-radius gate — kube-ha-surge never touches a namespace you didn't label.
+blast-radius gate — ha-surge never touches a namespace you didn't label.
 
 ```sh
 kubectl label namespace my-app ha-surge.lhns.de/managed=true
@@ -78,8 +78,8 @@ spec:
   # ...
 ```
 
-kube-ha-surge only surges Deployments that are **single-replica** and whose
-pods do **not** mount a `ReadWriteOnce` volume. Anything else is passed through
+ha-surge only covers Deployments that are **single-replica** and whose pods do
+**not** mount a `ReadWriteOnce` volume. Anything else is passed through
 untouched (see [limitations](limitations.md)).
 
 ## 4. Watch it work
@@ -90,40 +90,40 @@ Drain the node hosting the pod:
 kubectl drain <node> --ignore-daemonsets --delete-emptydir-data
 ```
 
-In another terminal, watch surge pods appear:
+In another terminal, watch the detached cover pod:
 
 ```sh
-kubectl get pods -n my-app -w -l ha-surge.lhns.de/surge=true
+kubectl get pods -n my-app -w -l ha-surge.lhns.de/detached=true
 ```
 
 You'll see:
 
-1. `kubectl drain` issues an eviction; the webhook creates a surge pod and
-   replies 429. `drain` prints something like
-   `error when evicting pod ... (will retry after 5s): Too Many Requests` and
-   keeps retrying.
-2. The surge pod becomes `Ready` and starts serving (the Service selects it —
-   it carries the app labels but not `pod-template-hash`).
-3. On the next retry the webhook allows the eviction; the original pod is
-   removed. The ReplicaSet creates its normal replacement.
-4. Once that replacement is Ready and the evicted pod is gone, the controller
-   deletes the surge pod.
+1. `kubectl drain` issues an eviction; the webhook detaches the doomed pod from
+   its ReplicaSet (removes `pod-template-hash`) and replies 429. `drain` prints
+   something like `error when evicting pod ... (will retry after 5s): Too Many
+   Requests` and keeps retrying.
+2. The ReplicaSet, now one pod short, creates its own replacement. Meanwhile the
+   detached pod keeps serving (the Service selects it — it still carries the app
+   labels, just not `pod-template-hash`).
+3. Once the ReplicaSet's replacement is `Ready`, the next retry's eviction is
+   allowed; the original (detached) pod is removed.
+4. The controller deletes the detached cover pod once the replacement is Ready.
 
 At no point was the workload without a serving pod.
 
 ## 5. Uninstall
 
 ```sh
-helm uninstall kube-ha-surge -n kube-ha-surge-system
+helm uninstall ha-surge -n ha-surge-system
 ```
 
-A pre-delete hook removes any leftover surge pods cluster-wide
-(`-l ha-surge.lhns.de/surge=true`). It is best-effort and never blocks the
+A pre-delete hook removes any leftover detached cover pods cluster-wide
+(`-l ha-surge.lhns.de/detached=true`). It is best-effort and never blocks the
 uninstall. To skip it and clean up manually:
 
 ```sh
-helm uninstall kube-ha-surge -n kube-ha-surge-system --no-hooks
-kubectl delete pods -A -l ha-surge.lhns.de/surge=true
+helm uninstall ha-surge -n ha-surge-system --no-hooks
+kubectl delete pods -A -l ha-surge.lhns.de/detached=true
 ```
 
 ## Development install (kustomize)
@@ -137,6 +137,6 @@ make undeploy
 ```
 
 The non-Helm path uses a placeholder webhook `caBundle`; supply a real serving
-cert Secret (`kube-ha-surge-webhook-tls`) out of band (e.g. a cert-manager
-`Certificate` against the `kube-ha-surge-webhook` Service) for the webhook to be
+cert Secret (`ha-surge-webhook-tls`) out of band (e.g. a cert-manager
+`Certificate` against the `ha-surge-webhook` Service) for the webhook to be
 reachable.

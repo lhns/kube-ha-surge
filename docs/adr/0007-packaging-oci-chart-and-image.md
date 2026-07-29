@@ -6,7 +6,7 @@ Date: 2026-07-29
 
 ## Context
 
-kube-ha-surge ships two artifacts: a container image (the operator) and a Helm
+ha-surge ships two artifacts: a container image (the operator) and a Helm
 chart (how you install it). We need a release process that's reproducible,
 verifiable, and consistent with the sibling lhns operators, so users can pin and
 verify what they run.
@@ -15,8 +15,8 @@ verify what they run.
 
 - **Distribution:** publish the operator **image** and the **Helm chart as an
   OCI artifact** to **GitHub Container Registry (GHCR)**:
-  - image `ghcr.io/lhns/kube-ha-surge`
-  - chart `oci://ghcr.io/lhns/charts/kube-ha-surge`
+  - image `ghcr.io/lhns/ha-surge`
+  - chart `oci://ghcr.io/lhns/charts/ha-surge`
 - **Trigger:** releases are cut from **git tags** (`vX.Y.Z`). The release
   workflow (already present as `.github/workflows/release.yaml`) stamps the
   version/commit/date into the binary, builds a multi-arch image, and pushes both

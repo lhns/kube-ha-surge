@@ -1,4 +1,4 @@
-# kube-ha-surge
+# ha-surge
 
 Make-before-break high availability for opted-in **single-replica Deployments**
 during node drains.
@@ -31,31 +31,32 @@ pod gone second.**
 
 ## How it works
 
-kube-ha-surge is a small operator with two pieces:
+ha-surge is a small operator with two pieces:
 
 1. **An eviction admission webhook.** It registers a `ValidatingWebhook` on the
    `pods/eviction` subresource. When something tries to evict a pod belonging to
    an opted-in single-replica Deployment, the webhook:
-   - creates a temporary cloned **surge pod** — a faithful copy of the doomed
-     pod, owned (`controller: true`) by the target Deployment, but stripped of
-     the `pod-template-hash` label so the ReplicaSet ignores it while the
-     Service still routes to it;
+   - **detaches the doomed pod from its ReplicaSet** by removing its
+     `pod-template-hash` label. The RS selector includes that label, so once it
+     is gone the RS no longer counts the pod and immediately creates its *own*
+     real replacement. The pod keeps its `app` labels, so the Service keeps
+     routing to it and it keeps serving. No clone, no scaling — `spec.replicas`
+     is never touched, so Flux/Argo never see drift.
    - **denies the eviction with HTTP 429** ("too many requests"). A
      webhook-supplied 429 surfaces to `kubectl drain` as a retryable
      `TooManyRequests` and is retried automatically — so the drain politely
      waits instead of failing.
-   - On the retry, once the surge pod is **Ready**, the webhook **allows** the
-     eviction. Old pod leaves only after new capacity is serving:
-     make-before-break.
+   - On the retry, once the ReplicaSet's replacement is **Ready**, the webhook
+     **allows** the eviction. The old (detached) pod, which was covering the
+     whole time, leaves only after new capacity is serving: make-before-break.
 
-2. **A garbage-collection controller.** Surge pods are temporary. Once the
-   evicted pod is gone and the ReplicaSet's own replacement is Ready, the
-   controller deletes the surge pod. It also enforces the `--max-surge-seconds`
-   fail-open timeout.
+2. **A garbage-collection controller.** The detached cover pod is temporary.
+   Once the ReplicaSet's own replacement is Ready, the controller deletes the
+   detached pod. It also enforces the `--max-surge-seconds` fail-open timeout.
 
 If the operator is down, unreachable, or erroring, the webhook **fails open**
 (`failurePolicy: Ignore`): evictions pass straight through and drains proceed
-exactly as they would without kube-ha-surge. The drain can get *slower*, never
+exactly as they would without ha-surge. The drain can get *slower*, never
 *wedged*, and never *lossy-by-surprise*.
 
 ## Quickstart
@@ -63,16 +64,16 @@ exactly as they would without kube-ha-surge. The drain can get *slower*, never
 Install the operator (OCI Helm chart on GHCR):
 
 ```sh
-helm install kube-ha-surge oci://ghcr.io/lhns/charts/kube-ha-surge \
-  -n kube-ha-surge-system --create-namespace
+helm install ha-surge oci://ghcr.io/lhns/charts/ha-surge \
+  -n ha-surge-system --create-namespace
 ```
 
 This defaults to `webhook.certSource=cert-manager` (needs cert-manager in the
 cluster). No cert-manager? Use the self-signed Helm path:
 
 ```sh
-helm install kube-ha-surge oci://ghcr.io/lhns/charts/kube-ha-surge \
-  -n kube-ha-surge-system --create-namespace \
+helm install ha-surge oci://ghcr.io/lhns/charts/ha-surge \
+  -n ha-surge-system --create-namespace \
   --set webhook.certSource=helm
 ```
 
@@ -86,12 +87,13 @@ kubectl label namespace my-app ha-surge.lhns.de/managed=true
 kubectl annotate deployment my-app -n my-app ha-surge.lhns.de/enabled=true
 ```
 
-Now drain the node hosting that pod and watch a surge pod appear, become Ready,
-and the eviction complete — with no coverage gap:
+Now drain the node hosting that pod and watch the old pod detach and cover while
+the ReplicaSet's replacement becomes Ready, then the eviction complete — with no
+coverage gap:
 
 ```sh
 kubectl drain <node> --ignore-daemonsets --delete-emptydir-data
-kubectl get pods -n my-app -l ha-surge.lhns.de/surge=true
+kubectl get pods -n my-app -l ha-surge.lhns.de/detached=true
 ```
 
 See [`docs/getting-started.md`](docs/getting-started.md) for a full walkthrough
@@ -100,16 +102,16 @@ and Helm value.
 
 ## Limitations
 
-kube-ha-surge deliberately refuses to act where it can't help safely:
+ha-surge deliberately refuses to act where it can't help safely:
 
-- **`ReadWriteOnce` / single-writer volumes** can't be surged — a stand-in
-  can't co-mount the volume (Multi-Attach). Those evictions pass straight
-  through.
+- **`ReadWriteOnce` / single-writer volumes** can't be covered — the ReplicaSet's
+  replacement can't co-mount the volume the detached pod still holds
+  (Multi-Attach). Those evictions pass straight through.
 - **Only Deployments** are supported in v1. StatefulSets (stable identity,
   ordered volumes) are out of scope.
-- **Don't add a blocking `minAvailable` PDB** to a surged workload — the PDB
-  refuses the eviction *before* the webhook is consulted, so the surge never
-  happens. Let kube-ha-surge own the disruption path.
+- **Don't add a blocking `minAvailable` PDB** to a covered workload — the PDB
+  refuses the eviction *before* the webhook is consulted, so the detach never
+  happens. Let ha-surge own the disruption path.
 - It shortens the drain gap; it is not a substitute for real replication
   against uncontrolled failures (a hard node crash still drops the single pod).
 

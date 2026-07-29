@@ -9,17 +9,17 @@ caBundle is supplied per cert source:
   helm         — injected inline from the CA generated in certificate.yaml.
 */ -}}
 {{- if eq .Values.webhook.certSource "helm" }}
-{{- include "kube-ha-surge.ensureWebhookCerts" . }}
+{{- include "ha-surge.ensureWebhookCerts" . }}
 {{- end }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
-  name: {{ include "kube-ha-surge.fullname" . }}
+  name: {{ include "ha-surge.fullname" . }}
   labels:
-    {{- include "kube-ha-surge.labels" . | nindent 4 }}
+    {{- include "ha-surge.labels" . | nindent 4 }}
   {{- if eq .Values.webhook.certSource "cert-manager" }}
   annotations:
-    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ include "kube-ha-surge.webhookCertificateName" . }}
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ include "ha-surge.webhookCertificateName" . }}
   {{- end }}
 webhooks:
   - name: eviction.ha-surge.lhns.de
@@ -38,7 +38,7 @@ webhooks:
         scope: Namespaced
     clientConfig:
       service:
-        name: {{ include "kube-ha-surge.webhookServiceName" . }}
+        name: {{ include "ha-surge.webhookServiceName" . }}
         namespace: {{ .Release.Namespace }}
         path: /validate-eviction
         port: 443
