@@ -1,0 +1,122 @@
+{{- /*
+Pre-delete hook (ADR 0004 fail-open lifecycle; mirrors kube-pv-reaper).
+
+Surge pods are created at runtime by the operator, not rendered by the chart —
+so `helm uninstall` would leave them orphaned once the controller that
+garbage-collects them is gone. This one-shot Job deletes every surge pod
+cluster-wide (`kubectl delete pods -A -l ha-surge.lhns.de/surge=true`) before
+Helm tears down the controller.
+
+It is designed to NEVER block the uninstall: backoffLimit 0 (no retries) and
+the container always exits 0, so even an unreachable apiserver can't stall the
+teardown. A minimal SA + ClusterRole (list/delete pods cluster-wide) scopes it.
+Toggle with cleanup.enabled (default true).
+*/ -}}
+{{- if .Values.cleanup.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "kube-ha-surge.fullname" . }}-cleanup
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+  labels:
+    {{- include "kube-ha-surge.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kube-ha-surge.fullname" . }}-cleanup
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+  labels:
+    {{- include "kube-ha-surge.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list, delete, deletecollection]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kube-ha-surge.fullname" . }}-cleanup
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+  labels:
+    {{- include "kube-ha-surge.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kube-ha-surge.fullname" . }}-cleanup
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kube-ha-surge.fullname" . }}-cleanup
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "kube-ha-surge.fullname" . }}-cleanup
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+  labels:
+    {{- include "kube-ha-surge.labels" . | nindent 4 }}
+spec:
+  # No retries: a backing-off Job would only widen the uninstall window.
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ .Values.cleanup.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: 120
+  template:
+    metadata:
+      labels:
+        {{- include "kube-ha-surge.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: cleanup
+    spec:
+      serviceAccountName: {{ include "kube-ha-surge.fullname" . }}-cleanup
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cleanup
+          image: "{{ .Values.cleanup.image.repository }}:{{ .Values.cleanup.image.tag }}"
+          imagePullPolicy: {{ .Values.cleanup.image.pullPolicy | default "IfNotPresent" }}
+          # The registry.k8s.io/kubectl image is distroless (kubectl only, no
+          # shell), so we can't wrap in `|| true`. Instead `--ignore-not-found`
+          # makes a no-match a success, and any transient apiserver error is
+          # bounded by activeDeadlineSeconds. Deleting a labelled set of pods is
+          # idempotent and safe to re-run.
+          command: [kubectl]
+          args:
+            - delete
+            - pods
+            - --all-namespaces
+            - --selector
+            - ha-surge.lhns.de/surge=true
+            - --ignore-not-found
+            - --wait=false
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop: [ALL]
+{{- end }}

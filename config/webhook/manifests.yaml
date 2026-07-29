@@ -1,0 +1,33 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: kube-ha-surge
+webhooks:
+  - name: eviction.ha-surge.lhns.de
+    admissionReviewVersions: [v1]
+    sideEffects: NoneOnDryRun
+    # Fail-open is mandatory: a broken operator must never wedge evictions.
+    failurePolicy: Ignore
+    matchPolicy: Equivalent
+    timeoutSeconds: 30
+    namespaceSelector:
+      matchLabels:
+        ha-surge.lhns.de/managed: "true"
+    rules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods/eviction]
+        scope: Namespaced
+    clientConfig:
+      service:
+        name: kube-ha-surge-webhook
+        namespace: kube-ha-surge-system
+        path: /validate-eviction
+        port: 443
+      # Placeholder caBundle for the non-Helm (`make deploy`) path. Helm's
+      # cert-manager / genSignedCert flow supplies the real CA (cert-manager's
+      # cainjector patches it via the inject-ca-from annotation, or the helm
+      # certSource inlines it). For a raw `kubectl apply -k config/default` dev
+      # deploy, patch this with your CA or run cert-manager against the Service.
+      caBundle: Cg==

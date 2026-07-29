@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-ha-surge-webhook
+  namespace: kube-ha-surge-system
+  labels:
+    app.kubernetes.io/name: kube-ha-surge
+    app.kubernetes.io/component: controller
+spec:
+  type: ClusterIP
+  ports:
+    - name: webhook
+      port: 443
+      targetPort: 9443
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: kube-ha-surge
+    app.kubernetes.io/component: controller

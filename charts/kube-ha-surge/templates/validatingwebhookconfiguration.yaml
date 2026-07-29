@@ -1,0 +1,47 @@
+{{- /*
+The eviction admission webhook (ADR 0001). ONE webhook on the pods/eviction
+subresource. failurePolicy is Ignore (fail-open, ADR 0004): a broken or
+unreachable operator must never wedge evictions or node drains.
+
+caBundle is supplied per cert source:
+  cert-manager — left empty; the cert-manager.io/inject-ca-from annotation makes
+                 cainjector patch it.
+  helm         — injected inline from the CA generated in certificate.yaml.
+*/ -}}
+{{- if eq .Values.webhook.certSource "helm" }}
+{{- include "kube-ha-surge.ensureWebhookCerts" . }}
+{{- end }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ include "kube-ha-surge.fullname" . }}
+  labels:
+    {{- include "kube-ha-surge.labels" . | nindent 4 }}
+  {{- if eq .Values.webhook.certSource "cert-manager" }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ include "kube-ha-surge.webhookCertificateName" . }}
+  {{- end }}
+webhooks:
+  - name: eviction.ha-surge.lhns.de
+    admissionReviewVersions: [v1]
+    sideEffects: NoneOnDryRun
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    matchPolicy: Equivalent
+    timeoutSeconds: 30
+    namespaceSelector:
+      {{- toYaml .Values.managedNamespaceSelector | nindent 6 }}
+    rules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods/eviction]
+        scope: Namespaced
+    clientConfig:
+      service:
+        name: {{ include "kube-ha-surge.webhookServiceName" . }}
+        namespace: {{ .Release.Namespace }}
+        path: /validate-eviction
+        port: 443
+      {{- if eq .Values.webhook.certSource "helm" }}
+      caBundle: {{ .Values._webhookCerts.ca }}
+      {{- end }}

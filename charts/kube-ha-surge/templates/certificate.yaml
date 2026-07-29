@@ -1,0 +1,56 @@
+{{- /*
+Webhook serving certificate. Two sources, selected by .Values.webhook.certSource
+(see values.yaml and ADR 0006):
+
+  cert-manager — render a selfSigned Issuer + a Certificate; cert-manager mints
+                 and rotates the Secret and its cainjector fills the webhook
+                 config's caBundle (see validatingwebhookconfiguration.yaml).
+
+  helm         — generate a self-signed CA + serving cert with genCA /
+                 genSignedCert (once; reused across upgrades via `lookup`) and
+                 write it into the Secret here. The CA is injected into the
+                 webhook config's caBundle. Pattern per kube-vnet ADR 0034.
+*/ -}}
+{{- if eq .Values.webhook.certSource "cert-manager" }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "kube-ha-surge.fullname" . }}-selfsigned
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-ha-surge.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "kube-ha-surge.webhookCertificateName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-ha-surge.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "kube-ha-surge.webhookCertSecretName" . }}
+  dnsNames:
+    - {{ include "kube-ha-surge.webhookServiceName" . }}.{{ .Release.Namespace }}.svc
+    - {{ include "kube-ha-surge.webhookServiceName" . }}.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    name: {{ include "kube-ha-surge.fullname" . }}-selfsigned
+    kind: Issuer
+{{- else if eq .Values.webhook.certSource "helm" }}
+{{- include "kube-ha-surge.ensureWebhookCerts" . -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "kube-ha-surge.webhookCertSecretName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-ha-surge.labels" . | nindent 4 }}
+type: kubernetes.io/tls
+data:
+  tls.crt: {{ .Values._webhookCerts.crt }}
+  tls.key: {{ .Values._webhookCerts.key }}
+  ca.crt: {{ .Values._webhookCerts.ca }}
+{{- else }}
+{{- fail (printf "webhook.certSource must be 'cert-manager' or 'helm', got %q" .Values.webhook.certSource) }}
+{{- end }}

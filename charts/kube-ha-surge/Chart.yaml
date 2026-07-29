@@ -1,0 +1,30 @@
+apiVersion: v2
+name: kube-ha-surge
+description: |
+  Kubernetes operator that gives opted-in single-replica Deployments
+  make-before-break HA during node drains. A ValidatingWebhook on the
+  pods/eviction subresource holds an eviction (HTTP 429) while a temporary
+  cloned "surge" pod comes up Ready, then allows it; a controller
+  garbage-collects the surge pods.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.25.0-0"
+keywords:
+  - eviction
+  - high-availability
+  - node-drain
+  - pod-disruption
+  - operator
+  - webhook
+home: https://github.com/lhns/kube-ha-surge
+sources:
+  - https://github.com/lhns/kube-ha-surge
+maintainers:
+  - name: Pierre Kisters
+    url: https://github.com/lhns
+icon: ""
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/operator: "true"
+  artifacthub.io/operatorCapabilities: "Basic Install"

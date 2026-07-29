@@ -1,0 +1,132 @@
+# Default values for kube-ha-surge.
+
+# Override the generated resource names. nameOverride replaces the chart name in
+# `<release>-<name>`; fullnameOverride replaces the whole base name. The chart's
+# fixed contract names (the webhook Service, the serving-cert Secret, the
+# ValidatingWebhookConfiguration, etc.) are all derived from the fullname base,
+# so keep the release named `kube-ha-surge` (or set fullnameOverride:
+# kube-ha-surge) to get the canonical names the docs reference.
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/lhns/kube-ha-surge
+  # tag overrides Chart.appVersion when set.
+  tag: ""
+  pullPolicy: IfNotPresent
+  # pullSecrets is a list of references to secrets in the release namespace.
+  pullSecrets: []
+
+# Number of operator replicas. Leader election is on by default — one replica
+# is normal; scale to 2 for HA of the operator itself across nodes.
+replicaCount: 1
+
+# Maximum time (seconds) the eviction webhook holds an eviction waiting for the
+# surge pod to become Ready before it fails open and allows the eviction. This
+# is the fail-safe bound: a stuck surge never wedges a drain longer than this.
+# Wired to the manager's --max-surge-seconds flag.
+maxSurgeSeconds: 120
+
+serviceAccount:
+  # create the operator ServiceAccount. When false, you must provide one and
+  # bind the ClusterRole / leader-election Role yourself.
+  create: true
+
+rbac:
+  # create the ClusterRole + ClusterRoleBinding for the operator.
+  create: true
+
+leaderElection:
+  # Enable leader election. Recommended on; harmless overhead with one replica
+  # and required for safe multi-replica HA. Needs a namespaced Role for leases.
+  enabled: true
+
+webhook:
+  # How the webhook serving certificate is provisioned. One of:
+  #   cert-manager (default) — render a selfSigned Issuer + Certificate and let
+  #                            cert-manager's cainjector fill the caBundle. Use
+  #                            this on clusters that already run cert-manager.
+  #   helm                   — generate a self-signed CA + serving cert with
+  #                            Helm's genCA/genSignedCert at install time (reused
+  #                            across upgrades via `lookup`, so it does not
+  #                            rotate every reconcile) and inject the CA into the
+  #                            webhook config's caBundle. Zero external deps.
+  certSource: cert-manager
+
+  # failurePolicy for the eviction webhook. MUST stay Ignore (fail-open): a
+  # broken or unreachable operator must never wedge evictions / node drains.
+  # See ADR 0004. Overriding to Fail is unsupported and dangerous.
+  failurePolicy: Ignore
+
+# namespaceSelector for the ValidatingWebhookConfiguration. Used verbatim. Only
+# evictions in namespaces carrying this label reach the operator — this is the
+# opt-in blast-radius gate (ADR 0004). Label a namespace with
+# `ha-surge.lhns.de/managed=true` to enroll it.
+managedNamespaceSelector:
+  matchLabels:
+    ha-surge.lhns.de/managed: "true"
+
+# Pod & container security context. Distroless defaults: non-root uid 65532,
+# read-only root FS, all caps dropped, RuntimeDefault seccomp.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  capabilities:
+    drop:
+      - ALL
+
+# Resource requests / limits for the operator container.
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+# Probes; tuned for a fast-start Go binary.
+livenessProbe:
+  initialDelaySeconds: 15
+  periodSeconds: 20
+readinessProbe:
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+# Pod-level scheduling.
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""
+
+# Extra annotations applied only to the operator Pod.
+podAnnotations: {}
+
+# Extra labels applied to every templated resource.
+commonLabels: {}
+
+# Termination grace period for the operator Pod.
+terminationGracePeriodSeconds: 10
+
+# Helm pre-delete hook. On `helm uninstall` it deletes leftover surge pods
+# cluster-wide (`kubectl delete pods -A -l ha-surge.lhns.de/surge=true`) so no
+# stand-in pods are orphaned once the controller that garbage-collects them is
+# gone. Best-effort and designed to NEVER block the uninstall: the container
+# always exits 0. See ADR 0004 / the pre-delete-hook template.
+cleanup:
+  enabled: true
+  # Job-level backstop, in seconds. Only bites if the hook pod can't be
+  # scheduled/pulled.
+  activeDeadlineSeconds: 120
+  image:
+    # Official kubectl image published by the Kubernetes SIG Release team.
+    repository: registry.k8s.io/kubectl
+    tag: "v1.30.0"
+    pullPolicy: IfNotPresent
