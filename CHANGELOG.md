@@ -10,21 +10,12 @@ Pinning to an exact version is recommended.
 
 ## [Unreleased]
 
-### Changed
+## [0.1.0] — 2026-07-29
 
-- Renamed the product and all published/deployed artifacts from `kube-ha-surge`
-  to **`ha-surge`** (image `ghcr.io/lhns/ha-surge`, chart
-  `oci://ghcr.io/lhns/charts/ha-surge`, namespace `ha-surge-system`, and every
-  Kubernetes resource name). The **GitHub repository and Go module path stay
-  `github.com/lhns/kube-ha-surge`**.
-- Replaced the clone-a-surge-pod mechanism with a **detach** mechanism: on an
-  eviction the webhook removes the doomed pod's `pod-template-hash` label,
-  detaching it from its ReplicaSet (which then creates its own real replacement)
-  while the pod keeps serving via the Service. `spec.replicas` is never touched
-  (no GitOps drift), no pod is cloned (no admission-policy/label-strip coupling —
-  the `--strip-label-prefixes` flag / `stripLabelPrefixes` value are removed),
-  and a controller deletes the detached cover pod once the replacement is Ready.
-  See ADR 0008 (supersedes 0002).
+First release. Published as image `ghcr.io/lhns/ha-surge:0.1.0` (+ `latest`) and
+OCI Helm chart `oci://ghcr.io/lhns/charts/ha-surge:0.1.0`. The **product and all
+artifacts are named `ha-surge`**; the **GitHub repository and Go module path stay
+`github.com/lhns/kube-ha-surge`**.
 
 ### Added
 
@@ -57,3 +48,6 @@ Pinning to an exact version is recommended.
     a pre-delete hook that clears leftover detached cover pods on uninstall.
   - **kustomize** manifests under `config/` for `make deploy` / release.yaml.
   - Docs: README, getting-started, reference, limitations, and ADRs 0001–0010.
+
+[Unreleased]: https://github.com/lhns/kube-ha-surge/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/lhns/kube-ha-surge/releases/tag/v0.1.0
