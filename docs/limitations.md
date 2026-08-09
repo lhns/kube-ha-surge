@@ -111,6 +111,90 @@ you make-before-break for planned disruptions of workloads that genuinely can't
 run two replicas — and it gets out of the way (fail-open) the moment anything
 about it breaks.
 
+## The surge budget can run out (`--max-surge-seconds`)
+
+Coverage lasts only as long as ha-surge is willing to hold the eviction. That
+bound is `--max-surge-seconds` (default **120**). If the ReplicaSet's replacement
+has not become **Ready** within it, the operator stops holding, allows the
+eviction, and logs:
+
+```
+detach timeout, failing open   pod=<name> namespace=<ns> deployment=<name>
+```
+
+The detached cover pod is then evicted with no replacement serving — **the
+workload takes its full drain gap**, exactly as if ha-surge were not installed.
+This is deliberate ([ADR 0004](adr/0004-opt-in-and-safety-refusals.md)): a
+coverage feature must never wedge a node drain. But it means coverage is
+*best-effort under a deadline*, not a guarantee, and the failure is quiet — the
+drain succeeds and the eviction call site sees nothing wrong.
+
+The budget has to cover **everything** between detach and Ready: scheduling, image
+pull, container start, and the app's own readiness probe (including its
+`initialDelaySeconds`). The default suits a warm cache and a healthy cluster. It
+is easy to exceed when
+
+- the image is not present on the target node and must be pulled cold,
+- the registry is slow, remote, or itself degraded,
+- storage is slow, so the pod is stuck `ContainerCreating` on volume attach,
+- the app is simply slow to start — a JVM, a migration on boot, a large index,
+- or the replacement cannot be scheduled at all (see the next section).
+
+**Size it against reality, not hope.** The number you want is how long that
+workload's pod actually takes to go from created to Ready *on this cluster, on a
+bad day*, plus headroom. If you have run a drain, the operator's own log gives it
+to you directly — the gap between `detached pod from ReplicaSet, holding
+eviction` and `replacement ready, allowing eviction` for each pod. Take the
+slowest, not the median: the timeout is only consulted when things are slow. A
+workload whose observed handoff is 90 s is not safely covered by a 120 s budget
+on a day when the registry is cold.
+
+Raising it is cheap. The cost of a larger budget is only that a drain waits
+longer *for workloads that are genuinely stuck* — a healthy handoff still
+finishes as soon as the replacement is Ready, because the gate is readiness and
+the timeout is only the ceiling. The cost of one that is too small is silent
+loss of the coverage you installed this for.
+
+## A replacement that cannot be scheduled is never covered
+
+The surge assumes the ReplicaSet's replacement can be **placed somewhere else**.
+When it cannot, the hold is futile: nothing will become Ready, the full
+`--max-surge-seconds` is burned, and the eviction fails open — a guaranteed
+timeout rather than an unlucky one.
+
+The common cause is a scheduling constraint that the drain itself invalidates. A
+node being drained is cordoned, so it is removed from the candidate set, and any
+rule that already needed a distinct node now has one fewer to work with:
+
+- `topologySpreadConstraints` with `whenUnsatisfiable: DoNotSchedule` over
+  `kubernetes.io/hostname`,
+- `requiredDuringSchedulingIgnoredDuringExecution` pod anti-affinity,
+- node selectors or taints that leave only a few eligible nodes,
+- a cluster with no spare capacity for one more pod.
+
+It bites hardest on **small clusters**. With three nodes and a hard
+per-hostname spread, cordoning one leaves two — and a replacement that must not
+share a node with either existing pod has nowhere to go, for the entire drain.
+The scheduler reports it plainly:
+
+```
+0/3 nodes are available: 1 node(s) were unschedulable,
+2 node(s) didn't match pod topology spread constraints.
+```
+
+ha-surge cannot fix this and does not try — it is a scheduling property of the
+workload, not of the eviction. If you want coverage for such a workload, give the
+replacement somewhere to land: soften the spread to `ScheduleAnyway`, relax hard
+anti-affinity to `preferredDuringScheduling…`, or add a node. Otherwise accept
+that it drains uncovered, and set expectations accordingly rather than raising
+`--max-surge-seconds` — a longer budget cannot help when the answer is that no
+node exists.
+
+Note this is distinct from the single-replica workloads ha-surge exists for.
+Anything with a hard cross-node spread already has multiple replicas, so it is
+usually surviving the drain on its other replicas; what it loses is a *replica*,
+not availability.
+
 ## Fail-open by design
 
 If the operator is down, unreachable, its cert is wrong, or it errors, the
