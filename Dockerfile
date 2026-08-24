@@ -2,7 +2,7 @@
 # --platform=$BUILDPLATFORM keeps the Go toolchain native to the runner's
 # architecture even when buildx is producing a multi-arch image; the RUN below
 # cross-compiles via GOOS/GOARCH so the binary still targets ${TARGETARCH}.
-FROM --platform=$BUILDPLATFORM golang:1.26 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27 AS builder
 WORKDIR /workspace
 
 COPY go.mod go.sum ./
