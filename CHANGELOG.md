@@ -10,6 +10,27 @@ Pinning to an exact version is recommended.
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-10-22
+
+### Security
+
+- **Rebuilt on current base images.** The image uses
+  `gcr.io/distroless/static:nonroot` (Debian 13), whose CA bundle drops the
+  emSign roots compromised in the October 2026 eMudhra intermediate CA key
+  compromise, and a Go 1.26 toolchain of 1.26.10 or later, which also rejects
+  the eight compromised keys in `crypto/x509`.
+- **Dependencies:** `golang.org/x/net` v0.60.0 (CVE-2026-78669) and
+  `golang.org/x/text` v0.42.0 (CVE-2026-56851), both rated HIGH by trivy.
+
+### Changed
+
+- Three Kubernetes module updates from the Dependabot `kubernetes` group (#5).
+
+### Documentation
+
+- README restructured for discoverability; the surge budget and the behaviour
+  with unschedulable replacements are now documented.
+
 ## [0.1.0] — 2026-07-29
 
 First release. Published as image `ghcr.io/lhns/ha-surge:0.1.0` (+ `latest`) and
@@ -49,5 +70,6 @@ artifacts are named `ha-surge`**; the **GitHub repository and Go module path sta
   - **kustomize** manifests under `config/` for `make deploy` / release.yaml.
   - Docs: README, getting-started, reference, limitations, and ADRs 0001–0010.
 
-[Unreleased]: https://github.com/lhns/kube-ha-surge/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/lhns/kube-ha-surge/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/lhns/kube-ha-surge/releases/tag/v0.1.1
 [0.1.0]: https://github.com/lhns/kube-ha-surge/releases/tag/v0.1.0
