@@ -2,12 +2,14 @@
 # runtime stage has no RUN). The golang tag is go.mod's toolchain version; CI fails on a minor
 # mismatch, and the local setup-go action makes CI test with this exact Go.
 FROM --platform=$BUILDPLATFORM golang:1.26.11@sha256:4165ee6bf3b7811fd7b40373290405c83d0167dcb87ee5f29c427cdcef45ff8f AS builder
+# PER-REPO: the line above (golang:<go.mod toolchain version>@sha256:<digest>).
 
 WORKDIR /workspace
 
 COPY go.mod go.sum ./
 RUN go mod download
 
+# PER-REPO: the source directories the build needs (traefik-reflector and ha-surge have no api/).
 COPY cmd/ cmd/
 COPY internal/ internal/
 
@@ -18,6 +20,7 @@ ARG TARGETARCH
 ARG VERSION=dev
 ARG COMMIT=none
 ARG BUILD_DATE=unknown
+# PER-REPO: oci-composer adds `ARG CMD=oci-composer` and builds ./cmd/${CMD}.
 
 RUN : "${TARGETOS:?}" "${TARGETARCH:?}" && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
