@@ -10,6 +10,12 @@ Pinning to an exact version is recommended.
 
 ## [Unreleased]
 
+### Fixed
+
+- **arm64 images carried an x86-64 binary** (0.1.0, 0.1.1): the Dockerfile defaulted
+  `TARGETOS`/`TARGETARCH`, overriding the per-platform values buildx sets. CI and the
+  release now check each platform's binary architecture.
+
 ## [0.1.1] — 2026-10-22
 
 ### Security

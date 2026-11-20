@@ -103,6 +103,21 @@ jobs:
             ghcr.io/lhns/ha-surge:${{ steps.mode.outputs.version }}
             ${{ steps.mode.outputs.extra_image_tags }}
 
+      # Before signing: the index can claim arm64 while holding an x86-64 binary.
+      - name: check binary architecture per platform
+        env:
+          IMAGE:     ghcr.io/lhns/ha-surge@${{ steps.build_image.outputs.digest }}
+          PLATFORMS: ${{ steps.mode.outputs.platforms }}
+        run: |
+          IFS=, read -ra platforms <<< "$PLATFORMS"
+          for p in "${platforms[@]}"; do
+            mkdir -p "pushed/${p//\//_}"
+            id=$(docker create --platform "$p" "$IMAGE")
+            docker cp "$id:/manager" "pushed/${p//\//_}/manager"
+            docker rm "$id" > /dev/null
+          done
+          scripts/check-binary-arch.sh pushed "${platforms[@]}"
+
       - name: cosign sign image (keyless)
         env:
           COSIGN_YES: "true"

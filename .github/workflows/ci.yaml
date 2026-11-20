@@ -35,6 +35,11 @@ jobs:
           push: false
           load: true
           tags: ghcr.io/lhns/ha-surge:ci
+      - name: build per-platform binaries (no push)
+        run: |
+          docker buildx build --platform linux/amd64,linux/arm64 --output type=local,dest=out,platform-split=true .
+      - name: check binary architecture per platform
+        run: scripts/check-binary-arch.sh out linux/amd64 linux/arm64
       - name: trivy image scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:

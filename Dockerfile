@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.6
-# --platform=$BUILDPLATFORM keeps the Go toolchain native to the runner's
-# architecture even when buildx is producing a multi-arch image; the RUN below
-# cross-compiles via GOOS/GOARCH so the binary still targets ${TARGETARCH}.
+# The toolchain runs natively ($BUILDPLATFORM) and cross-compiles to the
+# platform buildx sets in TARGETOS/TARGETARCH. Those ARGs must have no default:
+# a default overrides buildx's value and builds every platform for that arch.
 FROM --platform=$BUILDPLATFORM golang:1.26 AS builder
 WORKDIR /workspace
 
@@ -11,8 +11,8 @@ RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
 
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+ARG TARGETOS
+ARG TARGETARCH
 
 # Version stamps (the release workflow sets these from the git tag).
 ARG VERSION=dev
