@@ -10,6 +10,30 @@ Pinning to an exact version is recommended.
 
 ## [Unreleased]
 
+### Fixed
+
+- **arm64 images carried an x86-64 binary** (0.1.0, 0.1.1): the Dockerfile defaulted
+  `TARGETOS`/`TARGETARCH`, overriding the per-platform values buildx sets. CI and the
+  release now check each platform's binary architecture.
+
+### Changed
+
+- **Release order:** both platforms build and push by digest with no tag, each platform's
+  binary is checked, and only then are the version and `latest` tags applied and asserted to
+  resolve to that digest. Signing, the chart and the GitHub Release follow. Dev builds
+  (`0.0.0-dev.g<sha7>`) build both platforms too and never run on Dependabot branches.
+- **CI:** golangci-lint, a Go version gate (`go.mod` and the Dockerfile agree), a must-fail
+  check of the architecture check, Trivy on the image, and the Go that CI uses is the
+  Dockerfile's. Tool and action versions are pinned.
+- **Go:** `go.mod` has `toolchain go1.26.11`, the Dockerfile's builder is `golang:1.26.11`, and
+  both base images are digest-pinned.
+- **Release assets:** the chart SBOM from syft on the `.tgz` is gone; the image SBOM and the
+  chart signature remain. The GitHub Release notes are the version's CHANGELOG section.
+
+### Security
+
+- **Dependencies:** `golang.org/x/net` v0.62.0 (CVE-2026-78661), rated HIGH by trivy.
+
 ## [0.1.1] — 2026-10-22
 
 ### Security

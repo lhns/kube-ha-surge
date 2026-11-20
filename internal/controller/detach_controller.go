@@ -51,7 +51,7 @@ func (r *DetachReconciler) Reconcile(ctx context.Context, req reconcile.Request)
 	if !surge.IsDetached(p) || p.DeletionTimestamp != nil {
 		return reconcile.Result{}, nil
 	}
-	log := r.Log.WithValues("pod", req.NamespacedName.String())
+	log := r.Log.WithValues("pod", req.String())
 
 	dep := &appsv1.Deployment{}
 	err := r.Client.Get(ctx, types.NamespacedName{Namespace: p.Namespace, Name: p.Labels[surge.LabelFor]}, dep)
