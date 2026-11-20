@@ -2,6 +2,8 @@ module github.com/lhns/kube-ha-surge
 
 go 1.26.0
 
+toolchain go1.26.11
+
 require (
 	github.com/go-logr/logr v1.4.4
 	k8s.io/api v0.37.0

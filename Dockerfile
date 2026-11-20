@@ -1,8 +1,8 @@
-# syntax=docker/dockerfile:1.6
-# The toolchain runs natively ($BUILDPLATFORM) and cross-compiles to the
-# platform buildx sets in TARGETOS/TARGETARCH. Those ARGs must have no default:
-# a default overrides buildx's value and builds every platform for that arch.
-FROM --platform=$BUILDPLATFORM golang:1.26 AS builder
+# The compiler runs natively ($BUILDPLATFORM) and cross-compiles, so no QEMU is needed (the
+# runtime stage has no RUN). The golang tag is go.mod's toolchain version; CI fails on a minor
+# mismatch, and the local setup-go action makes CI test with this exact Go.
+FROM --platform=$BUILDPLATFORM golang:1.26.11@sha256:4165ee6bf3b7811fd7b40373290405c83d0167dcb87ee5f29c427cdcef45ff8f AS builder
+
 WORKDIR /workspace
 
 COPY go.mod go.sum ./
@@ -11,25 +11,21 @@ RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
 
+# No defaults: a default overrides the per-platform value buildx sets, which once built every
+# platform for amd64. The :? guard fails a build that sets none (no BuildKit).
 ARG TARGETOS
 ARG TARGETARCH
-
-# Version stamps (the release workflow sets these from the git tag).
 ARG VERSION=dev
 ARG COMMIT=none
 ARG BUILD_DATE=unknown
 
-# :? fails a build that sets no platform (e.g. without BuildKit) instead of building the host's.
 RUN : "${TARGETOS:?}" "${TARGETARCH:?}" && \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath \
-      -ldflags="-s -w \
-        -X main.version=${VERSION} \
-        -X main.commit=${COMMIT} \
-        -X main.date=${BUILD_DATE}" \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
+      -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${BUILD_DATE}" \
       -o /workspace/manager ./cmd
 
-FROM gcr.io/distroless/static:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931
+
 WORKDIR /
 COPY --from=builder /workspace/manager /manager
 USER 65532:65532
