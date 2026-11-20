@@ -16,6 +16,10 @@ Pinning to an exact version is recommended.
   `TARGETOS`/`TARGETARCH`, overriding the per-platform values buildx sets. CI and the
   release now check each platform's binary architecture.
 
+### Security
+
+- **Dependencies:** `golang.org/x/net` v0.62.0 (CVE-2026-78661), rated HIGH by trivy.
+
 ## [0.1.1] — 2026-10-22
 
 ### Security
