@@ -19,7 +19,9 @@ ARG VERSION=dev
 ARG COMMIT=none
 ARG BUILD_DATE=unknown
 
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+# :? fails a build that sets no platform (e.g. without BuildKit) instead of building the host's.
+RUN : "${TARGETOS:?}" "${TARGETARCH:?}" && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath \
       -ldflags="-s -w \
         -X main.version=${VERSION} \

@@ -101,9 +101,9 @@ jobs:
             BUILD_DATE=${{ steps.meta.outputs.build_date }}
           tags: |
             ghcr.io/lhns/ha-surge:${{ steps.mode.outputs.version }}
-            ${{ steps.mode.outputs.extra_image_tags }}
 
-      # Before signing: the index can claim arm64 while holding an x86-64 binary.
+      # Before latest, signing, the chart and the Release: the index can claim arm64 while
+      # holding an x86-64 binary. docker create picks the platform's manifest, so no QEMU.
       - name: check binary architecture per platform
         env:
           IMAGE:     ghcr.io/lhns/ha-surge@${{ steps.build_image.outputs.digest }}
@@ -117,6 +117,20 @@ jobs:
             docker rm "$id" > /dev/null
           done
           scripts/check-binary-arch.sh pushed "${platforms[@]}"
+
+      - name: add the other tags
+        env:
+          DIGEST: ${{ steps.build_image.outputs.digest }}
+          IMAGE:  ghcr.io/lhns/ha-surge@${{ steps.build_image.outputs.digest }}
+          TAGS:   ${{ steps.mode.outputs.extra_image_tags }}
+        run: |
+          IFS=, read -ra tags <<< "$TAGS"
+          docker buildx imagetools create "${tags[@]/#/--tag=}" "$IMAGE"
+          # Signing and the SBOM use the digest, so the tags must point at it unchanged.
+          for t in "${tags[@]}"; do
+            got=$(docker buildx imagetools inspect "$t" --format '{{json .Manifest}}' | jq -r .digest)
+            [ "$got" = "$DIGEST" ] || { echo "::error::$t is $got, want $DIGEST"; exit 1; }
+          done
 
       - name: cosign sign image (keyless)
         env:
