@@ -10,6 +10,8 @@ Pinning to an exact version is recommended.
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-11-22
+
 ### Fixed
 
 - **arm64 images carried an x86-64 binary** (0.1.0, 0.1.1): the Dockerfile defaulted
@@ -21,15 +23,21 @@ Pinning to an exact version is recommended.
 - **Release order:** both platforms build and push by digest with no tag, each platform's
   binary is checked, and only then are the version and `latest` tags applied and asserted to
   resolve to that digest. The chart follows; a release also signs the image and chart and
-  creates the GitHub Release. Dev builds (`0.0.0-dev.g<sha7>`) build both platforms too, are
-  no longer signed (ADR 0011) and never run on Dependabot branches.
-- **CI:** golangci-lint, a Go version gate (`go.mod` and the Dockerfile agree), a must-fail
-  check of the architecture check, Trivy on the image, and the Go that CI uses is the
-  Dockerfile's. Tool and action versions are pinned.
-- **Go:** `go.mod` has `toolchain go1.26.11`, the Dockerfile's builder is `golang:1.26.11`, and
-  both base images are digest-pinned.
-- **Release assets:** the chart SBOM from syft on the `.tgz` is gone; the image SBOM and the
-  chart signature remain. The GitHub Release notes are the version's CHANGELOG section.
+  creates the GitHub Release. A tag release first runs the full CI.
+- **Dev builds** are versioned `0.0.0-dev.g<sha7>` (was `0.0.0-dev.<sha7>`, invalid semver for
+  an all-digit sha with a leading zero), build both platforms (were amd64 only), are no longer
+  signed (ADR 0011) and never run on Dependabot branches.
+- **CI:** golangci-lint, a Go version gate (`go.mod` and the Dockerfile agree), both platforms
+  built and architecture-checked, and a must-fail test of that check. CI uses the Dockerfile's
+  Go. Tool and action versions are pinned (Helm v3.22.1).
+- **Image:** builder `golang:1.26.11` (`go.mod` has `toolchain go1.26.11`), runtime
+  `gcr.io/distroless/static-debian13:nonroot`, both digest-pinned.
+- **GitHub Release notes** are the version's CHANGELOG section.
+
+### Removed
+
+- **Chart SBOM:** syft on the chart `.tgz` and its attestation. The image SBOM and the chart
+  signature remain.
 
 ### Security
 
@@ -95,6 +103,7 @@ artifacts are named `ha-surge`**; the **GitHub repository and Go module path sta
   - **kustomize** manifests under `config/` for `make deploy` / release.yaml.
   - Docs: README, getting-started, reference, limitations, and ADRs 0001–0010.
 
-[Unreleased]: https://github.com/lhns/kube-ha-surge/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/lhns/kube-ha-surge/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/lhns/kube-ha-surge/releases/tag/v0.1.2
 [0.1.1]: https://github.com/lhns/kube-ha-surge/releases/tag/v0.1.1
 [0.1.0]: https://github.com/lhns/kube-ha-surge/releases/tag/v0.1.0

@@ -1,6 +1,7 @@
 # 0011 — Release signing scope: tagged releases only, image SBOM only
 
 Status: Accepted. Narrows the supply-chain decision in [0007](0007-packaging-oci-chart-and-image.md).
+
 Date: 2026-11-22
 
 ## Context
