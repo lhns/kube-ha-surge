@@ -12,10 +12,11 @@ new ADR supersedes the old one.
 4. [0004 — Opt-in, safety refusals, and fail-open](0004-opt-in-and-safety-refusals.md) — *superseded by 0009*
 5. [0005 — Go + controller-runtime](0005-go-controller-runtime.md)
 6. [0006 — Webhook serving cert: cert-manager or Helm-generated](0006-webhook-serving-cert-sources.md)
-7. [0007 — Packaging: OCI image + Helm chart to GHCR](0007-packaging-oci-chart-and-image.md)
+7. [0007 — Packaging: OCI image + Helm chart to GHCR](0007-packaging-oci-chart-and-image.md) — *narrowed by 0011*
 8. [0008 — Detach the doomed pod from its ReplicaSet](0008-detach-doomed-pod.md)
 9. [0009 — Enabled cascade + strategy-derived refusal](0009-enabled-cascade-and-strategy-refusal.md)
 10. [0010 — The operator runs HA by default](0010-operator-runs-ha.md)
+11. [0011 — Release signing scope: tagged releases only, image SBOM only](0011-release-signing-scope.md)
 
 ## Format
 

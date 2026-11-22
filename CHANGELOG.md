@@ -20,8 +20,9 @@ Pinning to an exact version is recommended.
 
 - **Release order:** both platforms build and push by digest with no tag, each platform's
   binary is checked, and only then are the version and `latest` tags applied and asserted to
-  resolve to that digest. Signing, the chart and the GitHub Release follow. Dev builds
-  (`0.0.0-dev.g<sha7>`) build both platforms too and never run on Dependabot branches.
+  resolve to that digest. The chart follows; a release also signs the image and chart and
+  creates the GitHub Release. Dev builds (`0.0.0-dev.g<sha7>`) build both platforms too, are
+  no longer signed (ADR 0011) and never run on Dependabot branches.
 - **CI:** golangci-lint, a Go version gate (`go.mod` and the Dockerfile agree), a must-fail
   check of the architecture check, Trivy on the image, and the Go that CI uses is the
   Dockerfile's. Tool and action versions are pinned.

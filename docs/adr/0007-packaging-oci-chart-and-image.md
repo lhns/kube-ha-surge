@@ -1,6 +1,6 @@
 # 0007 — Packaging: OCI image + Helm chart to GHCR
 
-Status: Accepted
+Status: Accepted. Supply chain narrowed by [0011](0011-release-signing-scope.md).
 
 Date: 2026-07-29
 

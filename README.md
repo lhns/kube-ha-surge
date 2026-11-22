@@ -95,8 +95,8 @@ helm install ha-surge oci://ghcr.io/lhns/charts/ha-surge \
 ```
 
 Images and charts are published to GHCR for every release
-(`ghcr.io/lhns/ha-surge`, `oci://ghcr.io/lhns/charts/ha-surge`), cosign-signed
-with SBOMs attached.
+(`ghcr.io/lhns/ha-surge`, `oci://ghcr.io/lhns/charts/ha-surge`), cosign-signed,
+the image with an SBOM attached.
 
 ## Enrol workloads
 
