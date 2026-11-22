@@ -70,6 +70,7 @@ here.
 ## Supply chain
 
 Released container images and Helm charts are signed with
-[cosign](https://github.com/sigstore/cosign) (keyless, GitHub OIDC) and ship
-SPDX SBOMs as cosign attestations and release assets (see
-[ADR 0007](docs/adr/0007-packaging-oci-chart-and-image.md)).
+[cosign](https://github.com/sigstore/cosign) (keyless, GitHub OIDC); the image's
+SPDX SBOM ships as a cosign attestation and a release asset (see
+[ADR 0007](docs/adr/0007-packaging-oci-chart-and-image.md) and
+[ADR 0011](docs/adr/0011-release-signing-scope.md)). Dev builds are not signed.
